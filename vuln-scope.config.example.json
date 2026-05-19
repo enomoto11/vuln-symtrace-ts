@@ -1,0 +1,16 @@
+{
+  "$schema": "./vuln-scope.schema.json",
+  "repos": [
+    {
+      "name": "api-server",
+      "path": "../api-server",
+      "tsconfig": "tsconfig.json"
+    },
+    {
+      "name": "admin-panel",
+      "path": "../admin-panel",
+      "tsconfig": "tsconfig.json"
+    }
+  ],
+  "severityThreshold": "moderate"
+}
