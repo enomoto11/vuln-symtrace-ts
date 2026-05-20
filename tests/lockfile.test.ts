@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseLockfile, findLockfile } from '../src/core/lockfile.js';
+import { parseLockfile, parseLockfileWithGraph, findLockfile } from '../src/core/lockfile.js';
 import { resolve, dirname } from 'node:path';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,6 +59,16 @@ packages:
 
   transitive-dep@2.3.4:
     resolution: {integrity: sha512-ccc}
+
+snapshots:
+
+  lodash@4.17.20: {}
+
+  '@scope/tool@1.0.0(react@18.2.0)':
+    dependencies:
+      transitive-dep: 2.3.4
+
+  transitive-dep@2.3.4: {}
 `;
 
 const NPM_SAMPLE = JSON.stringify({
@@ -113,6 +123,40 @@ const BERRY_SAMPLE = `__metadata:
   resolution: "lodash@npm:4.17.20"
 `;
 
+// express -> cookie, plus a nested copy of `shared` that must win over the
+// hoisted one when resolving `a`'s dependency.
+const NPM_GRAPH_SAMPLE = JSON.stringify({
+  name: 'fixture',
+  lockfileVersion: 3,
+  packages: {
+    '': { name: 'fixture', dependencies: { express: '^4.0.0', a: '^1.0.0' } },
+    'node_modules/express': {
+      version: '4.18.0',
+      dependencies: { cookie: '^0.5.0' },
+    },
+    'node_modules/cookie': { version: '0.5.0' },
+    'node_modules/a': { version: '1.0.0', dependencies: { shared: '^1.0.0' } },
+    'node_modules/a/node_modules/shared': { version: '1.5.0' },
+    'node_modules/shared': { version: '2.0.0' },
+  },
+});
+
+const YARN_GRAPH_SAMPLE = `# yarn lockfile v1
+
+express@^4.0.0:
+  version "4.18.0"
+  dependencies:
+    cookie "^0.5.0"
+
+cookie@^0.5.0:
+  version "0.5.0"
+`;
+
+const YARN_GRAPH_PKG = {
+  name: 'fixture',
+  dependencies: { express: '^4.0.0' },
+};
+
 describe('parseLockfile (pnpm)', () => {
   it('flags packages declared in importers as direct', () => {
     withLockfile('pnpm-lock.yaml', PNPM_SAMPLE, (lockfilePath) => {
@@ -149,6 +193,51 @@ describe('parseLockfile (pnpm)', () => {
       );
 
       expect(transitive?.isDirect).toBe(false);
+    });
+  });
+});
+
+describe('parseLockfileWithGraph (pnpm)', () => {
+  it('builds the dependency graph from the snapshots section', () => {
+    withLockfile('pnpm-lock.yaml', PNPM_SAMPLE, (lockfilePath) => {
+      const { graph } = parseLockfileWithGraph(lockfilePath);
+
+      // Snapshot keys carry a peer suffix that must be stripped.
+      expect(graph.get('@scope/tool@1.0.0')).toEqual(['transitive-dep@2.3.4']);
+      expect(graph.get('lodash@4.17.20')).toEqual([]);
+    });
+  });
+
+  it('still returns the installed package list alongside the graph', () => {
+    withLockfile('pnpm-lock.yaml', PNPM_SAMPLE, (lockfilePath) => {
+      const { packages } = parseLockfileWithGraph(lockfilePath);
+      expect(packages).toHaveLength(3);
+    });
+  });
+});
+
+describe('parseLockfileWithGraph (npm)', () => {
+  it('builds the dependency graph from the packages section', () => {
+    withLockfile('package-lock.json', NPM_GRAPH_SAMPLE, (lockfilePath) => {
+      const { graph } = parseLockfileWithGraph(lockfilePath);
+      expect(graph.get('express@4.18.0')).toEqual(['cookie@0.5.0']);
+    });
+  });
+
+  it('resolves a dependency to the nearest node_modules copy', () => {
+    withLockfile('package-lock.json', NPM_GRAPH_SAMPLE, (lockfilePath) => {
+      const { graph } = parseLockfileWithGraph(lockfilePath);
+      // `a` must resolve `shared` to its nested 1.5.0, not the hoisted 2.0.0.
+      expect(graph.get('a@1.0.0')).toEqual(['shared@1.5.0']);
+    });
+  });
+});
+
+describe('parseLockfileWithGraph (yarn classic)', () => {
+  it('builds the dependency graph from resolved entries', () => {
+    withYarnProject(YARN_GRAPH_SAMPLE, YARN_GRAPH_PKG, (lockfilePath) => {
+      const { graph } = parseLockfileWithGraph(lockfilePath);
+      expect(graph.get('express@4.18.0')).toEqual(['cookie@0.5.0']);
     });
   });
 });

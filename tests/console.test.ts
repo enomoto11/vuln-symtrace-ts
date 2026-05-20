@@ -45,6 +45,24 @@ describe('formatConsole', () => {
     expect(out).toContain('transitive dependency — import analysis skipped');
   });
 
+  it('renders dependency chains for a transitive package when known', () => {
+    const out = formatConsole({
+      totalPackages: 3,
+      directCount: 1,
+      vulnerablePackages: [
+        {
+          pkg: { name: 'minimist', version: '0.0.8', isDirect: false },
+          vulnerabilities: [{ id: 'GHSA-2', summary: 'Prototype Pollution' }],
+          impact: 'transitive',
+          usages: [],
+          dependencyPaths: [['mkdirp@0.5.1', 'minimist@0.0.8']],
+        },
+      ],
+    });
+    expect(out).toContain('pulled in by:');
+    expect(out).toContain('mkdirp@0.5.1 › minimist@0.0.8');
+  });
+
   it('renders a clean message when there are no vulnerabilities', () => {
     const out = formatConsole({
       totalPackages: 5,

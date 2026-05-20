@@ -12,11 +12,11 @@ Triage layer for `npm audit` and Dependabot — tells you which vulnerability al
 
 symtrace sits on top of your existing vulnerability tooling. It takes the list of known-vulnerable packages and cross-references it against your actual source code using TypeScript AST analysis (ts-morph), then classifies each one:
 
-| Level          | Meaning                                          |
-| -------------- | ------------------------------------------------ |
-| `needs-review` | Direct dependency that your code imports         |
-| `not-affected` | Direct dependency that is never imported          |
-| `transitive`   | Indirect dependency (import analysis is skipped) |
+| Level          | Meaning                                                         |
+| -------------- | --------------------------------------------------------------- |
+| `needs-review` | Direct dependency that your code imports                        |
+| `not-affected` | Direct dependency that is never imported                        |
+| `transitive`   | Indirect dependency; the report shows which direct dependency pulls it in |
 
 This lets you focus on the handful of alerts that represent real exposure instead of treating all of them equally.
 
@@ -72,7 +72,7 @@ Node.js >= 20.
 symtrace does not replace `npm audit` or Dependabot — it adds a triage step. Current limitations:
 
 - Detects whether a vulnerable package is imported, not whether a specific vulnerable API is called. A `needs-review` result means "your code uses this package; verify manually." Deeper call-level analysis is planned.
-- Transitive dependencies are flagged but not analyzed for code usage, since your code typically does not import them directly.
+- Transitive dependencies are flagged but not analyzed for code usage, since your code typically does not import them directly. The report shows the dependency chain that pulls each one in.
 - JavaScript-only (non-TypeScript) projects are supported via `allowJs`, but symbol resolution accuracy is lower without type information.
 
 ## Status
