@@ -29,7 +29,7 @@ function formatPackage(vp: VulnerablePackage): string[] {
   ];
 
   if (vp.impact === 'transitive') {
-    lines.push('    ↳ transitive dependency — import analysis skipped');
+    lines.push(...formatTransitive(vp));
   } else if (vp.impact === 'not-affected') {
     lines.push('    ↳ direct dependency, but not imported in code');
   } else {
@@ -40,6 +40,30 @@ function formatPackage(vp: VulnerablePackage): string[] {
 
   for (const vuln of vp.vulnerabilities) {
     lines.push(`      [${getSeverity(vuln)}] ${vuln.id} — ${vuln.summary ?? '(no summary)'}`);
+  }
+  return lines;
+}
+
+// At most this many dependency chains are listed per transitive package.
+const MAX_PATHS_SHOWN = 5;
+
+/**
+ * Describes a transitive package: the dependency chains that pull it in when
+ * known, or a note that import analysis was skipped when the chain cannot be
+ * resolved (e.g. npm/yarn lockfiles).
+ */
+function formatTransitive(vp: VulnerablePackage): string[] {
+  const paths = vp.dependencyPaths ?? [];
+  if (paths.length === 0) {
+    return ['    ↳ transitive dependency — import analysis skipped'];
+  }
+
+  const lines = ['    ↳ transitive dependency, pulled in by:'];
+  for (const path of paths.slice(0, MAX_PATHS_SHOWN)) {
+    lines.push(`        ${path.join(' › ')}`);
+  }
+  if (paths.length > MAX_PATHS_SHOWN) {
+    lines.push(`        (+${(paths.length - MAX_PATHS_SHOWN).toString()} more)`);
   }
   return lines;
 }

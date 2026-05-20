@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseLockfile, findLockfile } from '../src/core/lockfile.js';
+import { parseLockfile, parseLockfileWithGraph, findLockfile } from '../src/core/lockfile.js';
 import { resolve, dirname } from 'node:path';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,6 +59,16 @@ packages:
 
   transitive-dep@2.3.4:
     resolution: {integrity: sha512-ccc}
+
+snapshots:
+
+  lodash@4.17.20: {}
+
+  '@scope/tool@1.0.0(react@18.2.0)':
+    dependencies:
+      transitive-dep: 2.3.4
+
+  transitive-dep@2.3.4: {}
 `;
 
 const NPM_SAMPLE = JSON.stringify({
@@ -149,6 +159,25 @@ describe('parseLockfile (pnpm)', () => {
       );
 
       expect(transitive?.isDirect).toBe(false);
+    });
+  });
+});
+
+describe('parseLockfileWithGraph (pnpm)', () => {
+  it('builds the dependency graph from the snapshots section', () => {
+    withLockfile('pnpm-lock.yaml', PNPM_SAMPLE, (lockfilePath) => {
+      const { graph } = parseLockfileWithGraph(lockfilePath);
+
+      // Snapshot keys carry a peer suffix that must be stripped.
+      expect(graph.get('@scope/tool@1.0.0')).toEqual(['transitive-dep@2.3.4']);
+      expect(graph.get('lodash@4.17.20')).toEqual([]);
+    });
+  });
+
+  it('still returns the installed package list alongside the graph', () => {
+    withLockfile('pnpm-lock.yaml', PNPM_SAMPLE, (lockfilePath) => {
+      const { packages } = parseLockfileWithGraph(lockfilePath);
+      expect(packages).toHaveLength(3);
     });
   });
 });

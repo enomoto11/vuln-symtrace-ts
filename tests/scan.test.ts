@@ -28,6 +28,16 @@ packages:
 
   vuln-transitive@1.0.0:
     resolution: {integrity: sha512-c}
+
+snapshots:
+
+  vuln-imported@1.0.0:
+    dependencies:
+      vuln-transitive: 1.0.0
+
+  vuln-unused@1.0.0: {}
+
+  vuln-transitive@1.0.0: {}
 `;
 
 const TSCONFIG = JSON.stringify({
@@ -112,6 +122,9 @@ describe('scanProject', () => {
       expect(byName.get('vuln-unused')?.usages).toEqual([]);
 
       expect(byName.get('vuln-transitive')?.impact).toBe('transitive');
+      expect(byName.get('vuln-transitive')?.dependencyPaths).toEqual([
+        ['vuln-imported@1.0.0', 'vuln-transitive@1.0.0'],
+      ]);
     });
   });
 

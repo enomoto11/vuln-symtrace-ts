@@ -3,6 +3,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import type { InstalledPackage } from './types.js';
+import type { DependencyGraph } from './dependency-graph.js';
 
 // --- Partial schema for pnpm-lock.yaml (lockfileVersion 9) ---
 
@@ -17,13 +18,32 @@ const PnpmImporterSchema = z.object({
   optionalDependencies: z.record(z.string(), PnpmDepEntrySchema).optional(),
 });
 
+// Each `snapshots` entry holds a resolved package's own dependency edges.
+const PnpmSnapshotSchema = z.object({
+  dependencies: z.record(z.string(), z.string()).optional(),
+  optionalDependencies: z.record(z.string(), z.string()).optional(),
+});
+
 const PnpmLockSchema = z.object({
   lockfileVersion: z.string(),
   importers: z.record(z.string(), PnpmImporterSchema).optional(),
   packages: z.record(z.string(), z.unknown()).optional(),
+  snapshots: z.record(z.string(), PnpmSnapshotSchema).optional(),
 });
 
 type PnpmImporters = Record<string, z.infer<typeof PnpmImporterSchema>>;
+type PnpmSnapshots = Record<string, z.infer<typeof PnpmSnapshotSchema>>;
+
+/**
+ * The full result of parsing a lockfile: every installed package, plus the
+ * resolved dependency graph used to explain how transitive packages are
+ * pulled in. The graph is empty for lockfile formats not yet supported for
+ * graph extraction (currently npm and yarn).
+ */
+export interface ParsedLockfile {
+  readonly packages: readonly InstalledPackage[];
+  readonly graph: DependencyGraph;
+}
 
 // --- Partial schema for package-lock.json (lockfileVersion 2 / 3) ---
 
@@ -74,6 +94,15 @@ export function findLockfile(projectDir: string): string {
  * Supports pnpm-lock.yaml, package-lock.json, and yarn.lock (classic / v1).
  */
 export function parseLockfile(lockfilePath: string): readonly InstalledPackage[] {
+  return parseLockfileWithGraph(lockfilePath).packages;
+}
+
+/**
+ * Parses a lockfile into the installed package list and the resolved
+ * dependency graph. Supports pnpm-lock.yaml, package-lock.json, and yarn.lock
+ * (classic / v1); the graph is currently populated for pnpm only.
+ */
+export function parseLockfileWithGraph(lockfilePath: string): ParsedLockfile {
   const file = basename(lockfilePath);
   if (file === 'pnpm-lock.yaml') {
     return parsePnpmLock(lockfilePath);
@@ -89,7 +118,7 @@ export function parseLockfile(lockfilePath: string): readonly InstalledPackage[]
 
 // --- pnpm ---
 
-function parsePnpmLock(lockfilePath: string): readonly InstalledPackage[] {
+function parsePnpmLock(lockfilePath: string): ParsedLockfile {
   const content = readFileSync(lockfilePath, 'utf8');
   const raw: unknown = parseYaml(content);
   const lock = PnpmLockSchema.parse(raw);
@@ -112,7 +141,37 @@ function parsePnpmLock(lockfilePath: string): readonly InstalledPackage[] {
     });
   }
 
-  return result;
+  return { packages: result, graph: buildPnpmGraph(lock.snapshots ?? {}) };
+}
+
+/**
+ * Builds the resolved dependency graph from a pnpm lockfile's `snapshots`
+ * section. Snapshot keys and dependency versions may carry a peer-dependency
+ * suffix (`foo@1.0.0(bar@2.0.0)`), which is stripped so keys line up with the
+ * `name@version` form used everywhere else.
+ */
+function buildPnpmGraph(snapshots: PnpmSnapshots): DependencyGraph {
+  const graph = new Map<string, string[]>();
+
+  for (const [rawKey, snapshot] of Object.entries(snapshots)) {
+    const { name, version } = splitPackageKey(stripPeerSuffix(rawKey));
+    const nodeKey = `${name}@${version}`;
+
+    let children = graph.get(nodeKey);
+    if (children === undefined) {
+      children = [];
+      graph.set(nodeKey, children);
+    }
+
+    for (const group of [snapshot.dependencies, snapshot.optionalDependencies]) {
+      if (group === undefined) continue;
+      for (const [childName, childVersion] of Object.entries(group)) {
+        children.push(`${childName}@${stripPeerSuffix(childVersion)}`);
+      }
+    }
+  }
+
+  return graph;
 }
 
 /**
@@ -160,7 +219,7 @@ function stripPeerSuffix(version: string): string {
 
 // --- npm ---
 
-function parseNpmLock(lockfilePath: string): readonly InstalledPackage[] {
+function parseNpmLock(lockfilePath: string): ParsedLockfile {
   const raw: unknown = JSON.parse(readFileSync(lockfilePath, 'utf8'));
   const lock = NpmLockSchema.parse(raw);
   const packages = lock.packages ?? {};
@@ -186,7 +245,8 @@ function parseNpmLock(lockfilePath: string): readonly InstalledPackage[] {
     });
   }
 
-  return result;
+  // Graph extraction for npm lockfiles is not yet implemented.
+  return { packages: result, graph: new Map() };
 }
 
 /** Collects the names declared in the root package's dependency groups. */
@@ -220,7 +280,7 @@ function npmPackageName(key: string): string {
  * Parses a yarn v1 (classic) lockfile. Because yarn.lock has no notion of
  * direct vs transitive dependencies, the sibling package.json is consulted.
  */
-function parseYarnLock(lockfilePath: string): readonly InstalledPackage[] {
+function parseYarnLock(lockfilePath: string): ParsedLockfile {
   const content = readFileSync(lockfilePath, 'utf8');
   if (content.includes('__metadata:')) {
     throw new Error(
@@ -238,7 +298,8 @@ function parseYarnLock(lockfilePath: string): readonly InstalledPackage[] {
     seen.add(dedupKey);
     result.push({ name, version, isDirect: directNames.has(name) });
   }
-  return result;
+  // Graph extraction for yarn lockfiles is not yet implemented.
+  return { packages: result, graph: new Map() };
 }
 
 /** Parses yarn v1 lockfile entries into name/version pairs. */
