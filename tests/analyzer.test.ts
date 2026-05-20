@@ -29,16 +29,16 @@ function withProject(
   }
 }
 
+function analyzeLodash(tsConfigFilePath: string) {
+  return analyzeImports({ tsConfigFilePath, packageNames: ['lodash'] });
+}
+
 describe('analyzeImports', () => {
   it('detects a static import', () => {
     withProject(
       { 'app.ts': `import { merge } from 'lodash';\nexport const x = merge;` },
       (tsConfigFilePath) => {
-        const result = analyzeImports({
-          tsConfigFilePath,
-          packageNames: ['lodash'],
-        });
-        expect(result.get('lodash')).toHaveLength(1);
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
       },
     );
   });
@@ -47,11 +47,7 @@ describe('analyzeImports', () => {
     withProject(
       { 'app.ts': `export async function load() {\n  return import('lodash');\n}` },
       (tsConfigFilePath) => {
-        const result = analyzeImports({
-          tsConfigFilePath,
-          packageNames: ['lodash'],
-        });
-        expect(result.get('lodash')).toHaveLength(1);
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
       },
     );
   });
@@ -60,22 +56,74 @@ describe('analyzeImports', () => {
     withProject(
       { 'app.ts': `const lodash = require('lodash');\nexport { lodash };` },
       (tsConfigFilePath) => {
-        const result = analyzeImports({
-          tsConfigFilePath,
-          packageNames: ['lodash'],
-        });
-        expect(result.get('lodash')).toHaveLength(1);
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('detects a side-effect import', () => {
+    withProject({ 'app.ts': `import 'lodash';` }, (tsConfigFilePath) => {
+      expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+    });
+  });
+
+  it('detects a named re-export', () => {
+    withProject(
+      { 'app.ts': `export { merge } from 'lodash';` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('detects a wildcard re-export', () => {
+    withProject(
+      { 'app.ts': `export * from 'lodash';` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('ignores a type-only import', () => {
+    withProject(
+      { 'app.ts': `import type { Dictionary } from 'lodash';\nexport type X = Dictionary<number>;` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toEqual([]);
+      },
+    );
+  });
+
+  it('ignores a named import where every specifier is type-only', () => {
+    withProject(
+      { 'app.ts': `import { type Dictionary } from 'lodash';\nexport type X = Dictionary<number>;` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toEqual([]);
+      },
+    );
+  });
+
+  it('ignores a type-only re-export', () => {
+    withProject(
+      { 'app.ts': `export type { Dictionary } from 'lodash';` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toEqual([]);
+      },
+    );
+  });
+
+  it('still detects a value import when types are mixed in', () => {
+    withProject(
+      { 'app.ts': `import { type Dictionary, merge } from 'lodash';\nexport const x = merge;\nexport type X = Dictionary<number>;` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
       },
     );
   });
 
   it('returns an empty array for a package that is never imported', () => {
     withProject({ 'app.ts': `export const x = 1;` }, (tsConfigFilePath) => {
-      const result = analyzeImports({
-        tsConfigFilePath,
-        packageNames: ['lodash'],
-      });
-      expect(result.get('lodash')).toEqual([]);
+      expect(analyzeLodash(tsConfigFilePath).get('lodash')).toEqual([]);
     });
   });
 });

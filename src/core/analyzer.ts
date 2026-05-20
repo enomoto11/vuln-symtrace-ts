@@ -1,4 +1,12 @@
-import { Project, SyntaxKind, type CallExpression, type Node, type SourceFile } from 'ts-morph';
+import {
+  Project,
+  SyntaxKind,
+  type CallExpression,
+  type ExportDeclaration,
+  type ImportDeclaration,
+  type Node,
+  type SourceFile,
+} from 'ts-morph';
 import type { CodeUsage } from './types.js';
 
 export interface AnalyzeImportsOptions {
@@ -8,7 +16,9 @@ export interface AnalyzeImportsOptions {
 
 /**
  * Detects where each given package is imported within a TypeScript project.
- * Covers static imports, dynamic `import()` expressions, and `require()` calls.
+ * Covers static imports, re-exports, dynamic `import()` expressions, and
+ * `require()` calls. Type-only imports/exports are ignored because they are
+ * erased at compile time and cannot trigger a vulnerability at runtime.
  *
  * Returns a map from package name to its usage sites (empty array if unused).
  */
@@ -26,6 +36,7 @@ export function analyzeImports(options: AnalyzeImportsOptions): Map<string, Code
 
   for (const file of project.getSourceFiles()) {
     collectStaticImports(file, targets, result);
+    collectReExports(file, targets, result);
     collectDynamicImports(file, targets, result);
   }
 
@@ -38,7 +49,24 @@ function collectStaticImports(
   result: Map<string, CodeUsage[]>,
 ): void {
   for (const decl of file.getImportDeclarations()) {
+    if (isTypeOnlyImport(decl)) continue;
     const moduleName = decl.getModuleSpecifierValue();
+    if (targets.has(moduleName)) {
+      result.get(moduleName)?.push(toCodeUsage(file, decl, moduleName));
+    }
+  }
+}
+
+function collectReExports(
+  file: SourceFile,
+  targets: ReadonlySet<string>,
+  result: Map<string, CodeUsage[]>,
+): void {
+  for (const decl of file.getExportDeclarations()) {
+    const moduleName = decl.getModuleSpecifierValue();
+    // An export with no module specifier is a local export, not a re-export.
+    if (moduleName === undefined) continue;
+    if (isTypeOnlyExport(decl)) continue;
     if (targets.has(moduleName)) {
       result.get(moduleName)?.push(toCodeUsage(file, decl, moduleName));
     }
@@ -56,6 +84,33 @@ function collectDynamicImports(
       result.get(moduleName)?.push(toCodeUsage(file, call, moduleName));
     }
   }
+}
+
+/**
+ * Returns true when a static import is erased at compile time and therefore
+ * has no runtime effect: `import type ...`, or a named import whose every
+ * specifier is `type`-qualified. A side-effect import (`import 'pkg'`) is not
+ * type-only — it runs at runtime.
+ */
+function isTypeOnlyImport(decl: ImportDeclaration): boolean {
+  if (decl.isTypeOnly()) return true;
+  if (decl.getDefaultImport() !== undefined) return false;
+  if (decl.getNamespaceImport() !== undefined) return false;
+  const named = decl.getNamedImports();
+  if (named.length === 0) return false;
+  return named.every((specifier) => specifier.isTypeOnly());
+}
+
+/**
+ * Returns true when a re-export forwards only types: `export type ... from`,
+ * or a named re-export whose every specifier is `type`-qualified.
+ * `export * from 'pkg'` forwards runtime values and is not type-only.
+ */
+function isTypeOnlyExport(decl: ExportDeclaration): boolean {
+  if (decl.isTypeOnly()) return true;
+  const named = decl.getNamedExports();
+  if (named.length === 0) return false;
+  return named.every((specifier) => specifier.isTypeOnly());
 }
 
 /**
