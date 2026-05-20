@@ -1,29 +1,8 @@
 #!/usr/bin/env node
 
-import { resolve } from 'node:path';
 import { Command } from 'commander';
-import { findLockfile } from '../core/lockfile.js';
-import { scanProject, type ScanSummary } from '../core/scan.js';
 import { queryByPackage } from '../adapters/osv.js';
-import { getSeverity, meetsThreshold } from '../core/severity.js';
-import { formatConsole, formatJson } from '../reporters/console.js';
-import type { SeverityLevel } from '../core/types.js';
-
-function parseSeverity(value: string): SeverityLevel {
-  if (value === 'low' || value === 'moderate' || value === 'high' || value === 'critical') {
-    return value;
-  }
-  throw new Error(`Invalid --severity "${value}". Use one of: low, moderate, high, critical.`);
-}
-
-/** A non-zero exit is warranted when a needs-review package carries a vuln at or above the threshold. */
-function hasCiFailure(summary: ScanSummary, threshold: SeverityLevel): boolean {
-  return summary.vulnerablePackages.some(
-    (vp) =>
-      vp.impact === 'needs-review' &&
-      vp.vulnerabilities.some((v) => meetsThreshold(getSeverity(v), threshold)),
-  );
-}
+import { runScan } from './run-scan.js';
 
 const program = new Command();
 
@@ -40,21 +19,20 @@ program
   .option('-s, --severity <level>', 'severity threshold for the CI exit code', 'moderate')
   .option('--json', 'output JSON instead of human-readable text')
   .action(async (opts: { path: string; tsconfig: string; severity: string; json?: boolean }) => {
-    const lockfilePath = findLockfile(opts.path);
-    const tsConfigFilePath = resolve(opts.path, opts.tsconfig);
-    const threshold = parseSeverity(opts.severity);
-
-    if (opts.json !== true) {
+    const json = opts.json === true;
+    if (!json) {
       console.log(`\n🔍 Scanning "${opts.path}"...\n`);
     }
 
-    const summary = await scanProject({ lockfilePath, tsConfigFilePath });
+    const { output, exitCode } = await runScan({
+      path: opts.path,
+      tsconfig: opts.tsconfig,
+      severity: opts.severity,
+      json,
+    });
 
-    console.log(opts.json === true ? formatJson(summary) : formatConsole(summary));
-
-    if (hasCiFailure(summary, threshold)) {
-      process.exitCode = 1;
-    }
+    console.log(output);
+    process.exitCode = exitCode;
   });
 
 program

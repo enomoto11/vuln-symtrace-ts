@@ -73,6 +73,7 @@ symtrace does not replace `npm audit` or Dependabot — it adds a triage step. C
 
 - Detects whether a vulnerable package is imported, not whether a specific vulnerable API is called. A `needs-review` result means "your code uses this package; verify manually." Deeper call-level analysis is planned.
 - Transitive dependencies are flagged but not analyzed for code usage, since your code typically does not import them directly. The report shows the dependency chain that pulls each one in.
+- Workspaces / monorepos are not yet supported. symtrace analyzes a single package against one `tsconfig`, so in a pnpm/npm/yarn workspace with multiple packages the direct/transitive classification and import analysis can be inaccurate. Run symtrace once per package directory instead.
 - JavaScript-only (non-TypeScript) projects are supported via `allowJs`, but symbol resolution accuracy is lower without type information.
 
 ## Status
