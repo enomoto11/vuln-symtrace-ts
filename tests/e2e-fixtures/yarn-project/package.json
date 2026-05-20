@@ -1,8 +1,8 @@
 {
-  "name": "vuln-scope-e2e-fixture-yarn",
+  "name": "vuln-symtrace-ts-e2e-fixture-yarn",
   "version": "0.0.0",
   "private": true,
-  "description": "yarn-based fixture project for vuln-scope e2e tests. Intentionally outdated, vulnerable dependencies.",
+  "description": "yarn-based fixture project for vuln-symtrace-ts e2e tests. Intentionally outdated, vulnerable dependencies.",
   "dependencies": {
     "lodash": "4.17.20"
   },

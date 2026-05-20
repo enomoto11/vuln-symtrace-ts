@@ -1,5 +1,5 @@
 {
-  "$schema": "./vuln-scope.schema.json",
+  "$schema": "./vuln-symtrace-ts.schema.json",
   "repos": [
     {
       "name": "api-server",

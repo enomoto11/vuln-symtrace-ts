@@ -17,7 +17,7 @@ function withProject(
   files: Record<string, string>,
   run: (tsConfigFilePath: string) => void,
 ): void {
-  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-scope-analyzer-'));
+  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-symtrace-ts-analyzer-'));
   try {
     writeFileSync(resolve(dir, 'tsconfig.json'), TSCONFIG);
     for (const [name, content] of Object.entries(files)) {

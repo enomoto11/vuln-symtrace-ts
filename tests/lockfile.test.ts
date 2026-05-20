@@ -9,7 +9,7 @@ function withLockfile(
   content: string,
   run: (lockfilePath: string) => void,
 ): void {
-  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-scope-lock-'));
+  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-symtrace-ts-lock-'));
   try {
     const lockfilePath = resolve(dir, filename);
     writeFileSync(lockfilePath, content);
@@ -24,7 +24,7 @@ function withYarnProject(
   packageJson: object,
   run: (lockfilePath: string) => void,
 ): void {
-  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-scope-yarn-'));
+  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-symtrace-ts-yarn-'));
   try {
     const lockfilePath = resolve(dir, 'yarn.lock');
     writeFileSync(lockfilePath, yarnLock);
@@ -249,7 +249,7 @@ describe('findLockfile', () => {
   });
 
   it('throws when no supported lockfile exists', () => {
-    const dir = mkdtempSync(resolve(tmpdir(), 'vuln-scope-empty-'));
+    const dir = mkdtempSync(resolve(tmpdir(), 'vuln-symtrace-ts-empty-'));
     try {
       expect(() => findLockfile(dir)).toThrow(/No supported lockfile/);
     } finally {

@@ -1,8 +1,8 @@
 {
-  "name": "vuln-scope-e2e-fixture",
+  "name": "vuln-symtrace-ts-e2e-fixture",
   "version": "0.0.0",
   "private": true,
-  "description": "Fixture project for vuln-scope e2e tests. Contains intentionally outdated, vulnerable dependencies covering every impact level.",
+  "description": "Fixture project for vuln-symtrace-ts e2e tests. Contains intentionally outdated, vulnerable dependencies covering every impact level.",
   "dependencies": {
     "lodash": "4.17.20"
   },

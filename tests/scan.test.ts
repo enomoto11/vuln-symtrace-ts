@@ -54,7 +54,7 @@ async function withProject(
     tsConfigFilePath: string;
   }) => Promise<void>,
 ): Promise<void> {
-  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-scope-scan-'));
+  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-symtrace-ts-scan-'));
   try {
     writeFileSync(resolve(dir, 'pnpm-lock.yaml'), LOCKFILE);
     writeFileSync(resolve(dir, 'tsconfig.json'), TSCONFIG);

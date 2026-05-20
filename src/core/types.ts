@@ -42,7 +42,7 @@ export const OsvVulnerabilitySchema = z.object({
 
 export type OsvVulnerability = z.infer<typeof OsvVulnerabilitySchema>;
 
-// --- vuln-scope internal model ---
+// --- vuln-symtrace-ts internal model ---
 
 export interface InstalledPackage {
   readonly name: string;

@@ -28,7 +28,7 @@ function hasCiFailure(summary: ScanSummary, threshold: SeverityLevel): boolean {
 const program = new Command();
 
 program
-  .name('vuln-scope')
+  .name('symtrace')
   .description('Detect whether your code is actually affected by known vulnerabilities.')
   .version('0.1.0');
 

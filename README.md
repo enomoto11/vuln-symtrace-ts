@@ -1,4 +1,4 @@
-# vuln-scope
+# vuln-symtrace-ts
 
 A vulnerability scanner that checks whether your code is **actually affected** â€” not just whether a vulnerable package exists in your dependency tree.
 
@@ -15,7 +15,7 @@ A vulnerability scanner that checks whether your code is **actually affected** â
 
 ## Features
 
-- CLI (`vuln-scope scan` / `vuln-scope check`) and library usage
+- CLI (`symtrace scan` / `symtrace check`) and library usage
 - Multi-repo scanning
 - Severity-based filtering
 
