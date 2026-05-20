@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import type { InstalledPackage } from './types.js';
@@ -43,7 +43,15 @@ const NpmLockSchema = z.object({
 
 type NpmPackageEntry = z.infer<typeof NpmPackageEntrySchema>;
 
-const SUPPORTED_LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json'] as const;
+// --- Partial schema for package.json (resolves direct deps for yarn) ---
+
+const PackageJsonSchema = z.object({
+  dependencies: NpmDepRecord.optional(),
+  devDependencies: NpmDepRecord.optional(),
+  optionalDependencies: NpmDepRecord.optional(),
+});
+
+const SUPPORTED_LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock'] as const;
 
 /**
  * Finds the first supported lockfile in a project directory.
@@ -63,7 +71,7 @@ export function findLockfile(projectDir: string): string {
 
 /**
  * Parses a lockfile and returns every installed package with a direct/transitive flag.
- * Supports pnpm-lock.yaml and package-lock.json; yarn.lock will be added later.
+ * Supports pnpm-lock.yaml, package-lock.json, and yarn.lock (classic / v1).
  */
 export function parseLockfile(lockfilePath: string): readonly InstalledPackage[] {
   const file = basename(lockfilePath);
@@ -72,6 +80,9 @@ export function parseLockfile(lockfilePath: string): readonly InstalledPackage[]
   }
   if (file === 'package-lock.json') {
     return parseNpmLock(lockfilePath);
+  }
+  if (file === 'yarn.lock') {
+    return parseYarnLock(lockfilePath);
   }
   throw new Error(`Unsupported lockfile: "${file}". Supported: ${SUPPORTED_LOCKFILES.join(', ')}.`);
 }
@@ -201,4 +212,80 @@ function npmPackageName(key: string): string {
   const marker = 'node_modules/';
   const idx = key.lastIndexOf(marker);
   return idx === -1 ? key : key.slice(idx + marker.length);
+}
+
+// --- yarn (classic / v1) ---
+
+/**
+ * Parses a yarn v1 (classic) lockfile. Because yarn.lock has no notion of
+ * direct vs transitive dependencies, the sibling package.json is consulted.
+ */
+function parseYarnLock(lockfilePath: string): readonly InstalledPackage[] {
+  const content = readFileSync(lockfilePath, 'utf8');
+  if (content.includes('__metadata:')) {
+    throw new Error(
+      'Yarn Berry (v2+) lockfiles are not supported yet. Phase 1 supports yarn v1 (classic).',
+    );
+  }
+
+  const directNames = readPackageJsonDeps(dirname(lockfilePath));
+
+  const result: InstalledPackage[] = [];
+  const seen = new Set<string>();
+  for (const { name, version } of parseYarnV1Entries(content)) {
+    const dedupKey = `${name}@${version}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    result.push({ name, version, isDirect: directNames.has(name) });
+  }
+  return result;
+}
+
+/** Parses yarn v1 lockfile entries into name/version pairs. */
+function parseYarnV1Entries(content: string): { name: string; version: string }[] {
+  const entries: { name: string; version: string }[] = [];
+  let currentName: string | undefined;
+
+  for (const line of content.split('\n')) {
+    if (line.startsWith('#') || line.trim() === '') continue;
+
+    if (!line.startsWith(' ')) {
+      // Entry header, e.g. `"lodash@^4.0.0", lodash@^4.17.0:`
+      const header = line.replace(/:\s*$/, '');
+      const firstSpec = header.split(',')[0]?.trim();
+      currentName = firstSpec === undefined ? undefined : yarnSpecName(firstSpec);
+    } else if (currentName !== undefined) {
+      const match = /^version\s+"([^"]+)"$/.exec(line.trim());
+      if (match?.[1] !== undefined) {
+        entries.push({ name: currentName, version: match[1] });
+        currentName = undefined;
+      }
+    }
+  }
+
+  return entries;
+}
+
+/** Extracts the package name from a yarn spec like `@scope/pkg@^1.0.0` -> `@scope/pkg`. */
+function yarnSpecName(spec: string): string {
+  const unquoted = spec.replace(/^"/, '').replace(/"$/, '');
+  const at = unquoted.lastIndexOf('@');
+  return at > 0 ? unquoted.slice(0, at) : unquoted;
+}
+
+/** Reads the direct dependency names declared in a project's package.json. */
+function readPackageJsonDeps(projectDir: string): Set<string> {
+  const names = new Set<string>();
+  const pkgPath = resolve(projectDir, 'package.json');
+  if (!existsSync(pkgPath)) return names;
+
+  const raw: unknown = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  const pkg = PackageJsonSchema.parse(raw);
+  for (const group of [pkg.dependencies, pkg.devDependencies, pkg.optionalDependencies]) {
+    if (group === undefined) continue;
+    for (const name of Object.keys(group)) {
+      names.add(name);
+    }
+  }
+  return names;
 }
