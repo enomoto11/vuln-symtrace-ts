@@ -37,8 +37,7 @@ type PnpmSnapshots = Record<string, z.infer<typeof PnpmSnapshotSchema>>;
 /**
  * The full result of parsing a lockfile: every installed package, plus the
  * resolved dependency graph used to explain how transitive packages are
- * pulled in. The graph is empty for lockfile formats not yet supported for
- * graph extraction (currently npm and yarn).
+ * pulled in.
  */
 export interface ParsedLockfile {
   readonly packages: readonly InstalledPackage[];
@@ -100,7 +99,7 @@ export function parseLockfile(lockfilePath: string): readonly InstalledPackage[]
 /**
  * Parses a lockfile into the installed package list and the resolved
  * dependency graph. Supports pnpm-lock.yaml, package-lock.json, and yarn.lock
- * (classic / v1); the graph is currently populated for pnpm only.
+ * (classic / v1).
  */
 export function parseLockfileWithGraph(lockfilePath: string): ParsedLockfile {
   const file = basename(lockfilePath);
@@ -245,8 +244,68 @@ function parseNpmLock(lockfilePath: string): ParsedLockfile {
     });
   }
 
-  // Graph extraction for npm lockfiles is not yet implemented.
-  return { packages: result, graph: new Map() };
+  return { packages: result, graph: buildNpmGraph(packages) };
+}
+
+/**
+ * Builds the resolved dependency graph from an npm lockfile's `packages`
+ * section. Each dependency is resolved to the installed copy npm would use,
+ * following the nearest-`node_modules` rule.
+ */
+function buildNpmGraph(packages: Record<string, NpmPackageEntry>): DependencyGraph {
+  const graph = new Map<string, string[]>();
+
+  for (const [path, entry] of Object.entries(packages)) {
+    // The "" root is the project itself, not an installed package; its direct
+    // dependencies are themselves the roots, so no root node is needed.
+    if (path === '' || entry.version === undefined) continue;
+
+    const nodeKey = `${npmPackageName(path)}@${entry.version}`;
+    let children = graph.get(nodeKey);
+    if (children === undefined) {
+      children = [];
+      graph.set(nodeKey, children);
+    }
+
+    for (const group of [entry.dependencies, entry.optionalDependencies]) {
+      if (group === undefined) continue;
+      for (const depName of Object.keys(group)) {
+        const depPath = resolveNpmDepPath(path, depName, packages);
+        const depEntry = depPath === undefined ? undefined : packages[depPath];
+        if (depEntry?.version !== undefined) {
+          children.push(`${depName}@${depEntry.version}`);
+        }
+      }
+    }
+  }
+
+  return graph;
+}
+
+/**
+ * Resolves which installed copy of `depName` a package at `fromPath` uses,
+ * following npm's nearest-`node_modules` rule: look in the package's own
+ * `node_modules`, then each ancestor's, up to the root. Returns the `packages`
+ * key of that copy, or undefined when it cannot be located.
+ */
+function resolveNpmDepPath(
+  fromPath: string,
+  depName: string,
+  packages: Record<string, NpmPackageEntry>,
+): string | undefined {
+  const marker = '/node_modules/';
+  let prefix = fromPath;
+  for (;;) {
+    const candidate = prefix === '' ? `node_modules/${depName}` : `${prefix}${marker}${depName}`;
+    if (packages[candidate] !== undefined) {
+      return candidate;
+    }
+    if (prefix === '') {
+      return undefined;
+    }
+    const idx = prefix.lastIndexOf(marker);
+    prefix = idx === -1 ? '' : prefix.slice(0, idx);
+  }
 }
 
 /** Collects the names declared in the root package's dependency groups. */
@@ -289,49 +348,136 @@ function parseYarnLock(lockfilePath: string): ParsedLockfile {
   }
 
   const directNames = readPackageJsonDeps(dirname(lockfilePath));
+  const entries = parseYarnV1Entries(content);
 
   const result: InstalledPackage[] = [];
   const seen = new Set<string>();
-  for (const { name, version } of parseYarnV1Entries(content)) {
+  for (const { name, version } of entries) {
     const dedupKey = `${name}@${version}`;
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
     result.push({ name, version, isDirect: directNames.has(name) });
   }
-  // Graph extraction for yarn lockfiles is not yet implemented.
-  return { packages: result, graph: new Map() };
+
+  return { packages: result, graph: buildYarnGraph(entries) };
 }
 
-/** Parses yarn v1 lockfile entries into name/version pairs. */
-function parseYarnV1Entries(content: string): { name: string; version: string }[] {
-  const entries: { name: string; version: string }[] = [];
-  let currentName: string | undefined;
+/** A single resolved entry of a yarn v1 lockfile. */
+interface YarnEntry {
+  /** Every requested spec (`name@range`) the entry resolves, from its header. */
+  readonly specifiers: readonly string[];
+  readonly name: string;
+  readonly version: string;
+  /** This package's own dependencies, as `name -> range`. */
+  readonly dependencies: ReadonlyMap<string, string>;
+}
+
+/** Parses a yarn v1 lockfile into its resolved entries. */
+function parseYarnV1Entries(content: string): YarnEntry[] {
+  const entries: YarnEntry[] = [];
+
+  let specifiers: string[] | undefined;
+  let version: string | undefined;
+  let dependencies = new Map<string, string>();
+  let inDependencies = false;
+
+  const flush = (): void => {
+    if (specifiers !== undefined && version !== undefined) {
+      entries.push({
+        specifiers,
+        name: yarnSpecName(specifiers[0] ?? ''),
+        version,
+        dependencies,
+      });
+    }
+    specifiers = undefined;
+    version = undefined;
+    dependencies = new Map();
+    inDependencies = false;
+  };
 
   for (const line of content.split('\n')) {
     if (line.startsWith('#') || line.trim() === '') continue;
 
     if (!line.startsWith(' ')) {
       // Entry header, e.g. `"lodash@^4.0.0", lodash@^4.17.0:`
+      flush();
       const header = line.replace(/:\s*$/, '');
-      const firstSpec = header.split(',')[0]?.trim();
-      currentName = firstSpec === undefined ? undefined : yarnSpecName(firstSpec);
-    } else if (currentName !== undefined) {
-      const match = /^version\s+"([^"]+)"$/.exec(line.trim());
-      if (match?.[1] !== undefined) {
-        entries.push({ name: currentName, version: match[1] });
-        currentName = undefined;
+      specifiers = header.split(',').map((spec) => unquote(spec.trim()));
+      continue;
+    }
+
+    const trimmed = line.trim();
+    const indent = line.length - line.trimStart().length;
+
+    if (indent <= 2) {
+      inDependencies = false;
+      const versionMatch = /^version\s+"?([^"]+?)"?$/.exec(trimmed);
+      if (versionMatch?.[1] !== undefined) {
+        version = versionMatch[1];
+      } else if (trimmed === 'dependencies:' || trimmed === 'optionalDependencies:') {
+        inDependencies = true;
+      }
+    } else if (inDependencies) {
+      const dep = parseYarnDepLine(trimmed);
+      if (dep !== undefined) {
+        dependencies.set(dep.name, dep.range);
       }
     }
   }
+  flush();
 
   return entries;
 }
 
+/** Parses a yarn dependency line such as `"@babel/core" "^7.0.0"`. */
+function parseYarnDepLine(line: string): { name: string; range: string } | undefined {
+  const match = /^("[^"]+"|\S+)\s+"?([^"]+?)"?$/.exec(line);
+  if (match?.[1] === undefined || match[2] === undefined) return undefined;
+  return { name: unquote(match[1]), range: match[2] };
+}
+
+/**
+ * Builds the resolved dependency graph from yarn v1 entries. yarn.lock is its
+ * own resolution table: every `name@range` spec maps to a resolved version, so
+ * each entry's dependency ranges can be looked up directly.
+ */
+function buildYarnGraph(entries: readonly YarnEntry[]): DependencyGraph {
+  const specToVersion = new Map<string, string>();
+  for (const entry of entries) {
+    for (const spec of entry.specifiers) {
+      specToVersion.set(spec, entry.version);
+    }
+  }
+
+  const graph = new Map<string, string[]>();
+  for (const entry of entries) {
+    const nodeKey = `${entry.name}@${entry.version}`;
+    let children = graph.get(nodeKey);
+    if (children === undefined) {
+      children = [];
+      graph.set(nodeKey, children);
+    }
+    for (const [childName, childRange] of entry.dependencies) {
+      const childVersion = specToVersion.get(`${childName}@${childRange}`);
+      if (childVersion !== undefined) {
+        children.push(`${childName}@${childVersion}`);
+      }
+    }
+  }
+  return graph;
+}
+
 /** Extracts the package name from a yarn spec like `@scope/pkg@^1.0.0` -> `@scope/pkg`. */
 function yarnSpecName(spec: string): string {
-  const unquoted = spec.replace(/^"/, '').replace(/"$/, '');
+  const unquoted = unquote(spec);
   const at = unquoted.lastIndexOf('@');
   return at > 0 ? unquoted.slice(0, at) : unquoted;
+}
+
+/** Removes a single pair of surrounding double quotes, if present. */
+function unquote(value: string): string {
+  return value.replace(/^"/, '').replace(/"$/, '');
 }
 
 /** Reads the direct dependency names declared in a project's package.json. */

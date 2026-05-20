@@ -72,7 +72,7 @@ Node.js >= 20.
 symtrace does not replace `npm audit` or Dependabot — it adds a triage step. Current limitations:
 
 - Detects whether a vulnerable package is imported, not whether a specific vulnerable API is called. A `needs-review` result means "your code uses this package; verify manually." Deeper call-level analysis is planned.
-- Transitive dependencies are flagged but not analyzed for code usage, since your code typically does not import them directly. For pnpm lockfiles the report shows the dependency chain that pulls each one in; chain extraction for npm and yarn lockfiles is not yet implemented.
+- Transitive dependencies are flagged but not analyzed for code usage, since your code typically does not import them directly. The report shows the dependency chain that pulls each one in.
 - JavaScript-only (non-TypeScript) projects are supported via `allowJs`, but symbol resolution accuracy is lower without type information.
 
 ## Status
