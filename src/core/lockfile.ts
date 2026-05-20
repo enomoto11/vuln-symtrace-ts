@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import type { InstalledPackage } from './types.js';
@@ -25,24 +25,65 @@ const PnpmLockSchema = z.object({
 
 type PnpmImporters = Record<string, z.infer<typeof PnpmImporterSchema>>;
 
+// --- Partial schema for package-lock.json (lockfileVersion 2 / 3) ---
+
+const NpmDepRecord = z.record(z.string(), z.string());
+
+const NpmPackageEntrySchema = z.object({
+  version: z.string().optional(),
+  dependencies: NpmDepRecord.optional(),
+  devDependencies: NpmDepRecord.optional(),
+  optionalDependencies: NpmDepRecord.optional(),
+});
+
+const NpmLockSchema = z.object({
+  lockfileVersion: z.number(),
+  packages: z.record(z.string(), NpmPackageEntrySchema).optional(),
+});
+
+type NpmPackageEntry = z.infer<typeof NpmPackageEntrySchema>;
+
+const SUPPORTED_LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json'] as const;
+
+/**
+ * Finds the first supported lockfile in a project directory.
+ */
+export function findLockfile(projectDir: string): string {
+  for (const name of SUPPORTED_LOCKFILES) {
+    const candidate = resolve(projectDir, name);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error(
+    `No supported lockfile found in "${projectDir}". ` +
+      `Expected one of: ${SUPPORTED_LOCKFILES.join(', ')}.`,
+  );
+}
+
 /**
  * Parses a lockfile and returns every installed package with a direct/transitive flag.
- * Phase 1 supports pnpm-lock.yaml only; npm/yarn lockfiles will be added later.
+ * Supports pnpm-lock.yaml and package-lock.json; yarn.lock will be added later.
  */
 export function parseLockfile(lockfilePath: string): readonly InstalledPackage[] {
   const file = basename(lockfilePath);
   if (file === 'pnpm-lock.yaml') {
     return parsePnpmLock(lockfilePath);
   }
-  throw new Error(`Unsupported lockfile: "${file}". Phase 1 supports pnpm-lock.yaml only.`);
+  if (file === 'package-lock.json') {
+    return parseNpmLock(lockfilePath);
+  }
+  throw new Error(`Unsupported lockfile: "${file}". Supported: ${SUPPORTED_LOCKFILES.join(', ')}.`);
 }
+
+// --- pnpm ---
 
 function parsePnpmLock(lockfilePath: string): readonly InstalledPackage[] {
   const content = readFileSync(lockfilePath, 'utf8');
   const raw: unknown = parseYaml(content);
   const lock = PnpmLockSchema.parse(raw);
 
-  const directVersions = collectDirectVersions(lock.importers ?? {});
+  const directVersions = collectPnpmDirectVersions(lock.importers ?? {});
 
   const result: InstalledPackage[] = [];
   const seen = new Set<string>();
@@ -67,7 +108,7 @@ function parsePnpmLock(lockfilePath: string): readonly InstalledPackage[] {
  * Builds a name -> set-of-versions map of every package declared directly in an
  * importer's dependencies/devDependencies/optionalDependencies.
  */
-function collectDirectVersions(importers: PnpmImporters): Map<string, Set<string>> {
+function collectPnpmDirectVersions(importers: PnpmImporters): Map<string, Set<string>> {
   const direct = new Map<string, Set<string>>();
 
   for (const importer of Object.values(importers)) {
@@ -104,4 +145,60 @@ function splitPackageKey(key: string): { name: string; version: string } {
 function stripPeerSuffix(version: string): string {
   const paren = version.indexOf('(');
   return paren === -1 ? version : version.slice(0, paren);
+}
+
+// --- npm ---
+
+function parseNpmLock(lockfilePath: string): readonly InstalledPackage[] {
+  const raw: unknown = JSON.parse(readFileSync(lockfilePath, 'utf8'));
+  const lock = NpmLockSchema.parse(raw);
+  const packages = lock.packages ?? {};
+
+  const directNames = collectNpmDirectNames(packages['']);
+
+  const result: InstalledPackage[] = [];
+  const seen = new Set<string>();
+
+  for (const [key, entry] of Object.entries(packages)) {
+    // The "" key is the project root, not an installed package.
+    if (key === '' || entry.version === undefined) continue;
+
+    const name = npmPackageName(key);
+    const dedupKey = `${name}@${entry.version}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    result.push({
+      name,
+      version: entry.version,
+      isDirect: directNames.has(name),
+    });
+  }
+
+  return result;
+}
+
+/** Collects the names declared in the root package's dependency groups. */
+function collectNpmDirectNames(root: NpmPackageEntry | undefined): Set<string> {
+  const names = new Set<string>();
+  if (root === undefined) return names;
+
+  for (const group of [root.dependencies, root.devDependencies, root.optionalDependencies]) {
+    if (group === undefined) continue;
+    for (const name of Object.keys(group)) {
+      names.add(name);
+    }
+  }
+
+  return names;
+}
+
+/**
+ * Extracts the package name from an npm `packages` key such as
+ * `node_modules/foo/node_modules/@scope/bar` -> `@scope/bar`.
+ */
+function npmPackageName(key: string): string {
+  const marker = 'node_modules/';
+  const idx = key.lastIndexOf(marker);
+  return idx === -1 ? key : key.slice(idx + marker.length);
 }

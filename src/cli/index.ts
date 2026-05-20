@@ -2,6 +2,7 @@
 
 import { resolve } from 'node:path';
 import { Command } from 'commander';
+import { findLockfile } from '../core/lockfile.js';
 import { scanProject, type ScanSummary } from '../core/scan.js';
 import { queryByPackage } from '../adapters/osv.js';
 import { getSeverity, meetsThreshold } from '../core/severity.js';
@@ -39,7 +40,7 @@ program
   .option('-s, --severity <level>', 'severity threshold for the CI exit code', 'moderate')
   .option('--json', 'output JSON instead of human-readable text')
   .action(async (opts: { path: string; tsconfig: string; severity: string; json?: boolean }) => {
-    const lockfilePath = resolve(opts.path, 'pnpm-lock.yaml');
+    const lockfilePath = findLockfile(opts.path);
     const tsConfigFilePath = resolve(opts.path, opts.tsconfig);
     const threshold = parseSeverity(opts.severity);
 

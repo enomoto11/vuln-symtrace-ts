@@ -1,5 +1,5 @@
 export { analyzeImports, type AnalyzeImportsOptions } from './analyzer.js';
-export { parseLockfile } from './lockfile.js';
+export { parseLockfile, findLockfile } from './lockfile.js';
 export { scanProject, type ScanOptions, type VulnerablePackage, type ScanSummary } from './scan.js';
 export { getSeverity, meetsThreshold } from './severity.js';
 export type {
