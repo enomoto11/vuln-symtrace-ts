@@ -27,7 +27,9 @@ program
       return;
     }
 
-    console.log(`⚠️  Found ${vulns.length.toString()} vulnerabilit${vulns.length === 1 ? 'y' : 'ies'}:\n`);
+    console.log(
+      `⚠️  Found ${vulns.length.toString()} vulnerabilit${vulns.length === 1 ? 'y' : 'ies'}:\n`,
+    );
     for (const v of vulns) {
       const aliases = v.aliases?.join(', ') ?? 'none';
       console.log(`  ${v.id} — ${v.summary ?? '(no summary)'}`);
@@ -62,11 +64,15 @@ program
     const vulns = await queryByPackage('npm', opts.package, opts.version);
 
     if (vulns.length === 0) {
-      console.log(`✅ No known vulnerabilities for ${opts.package}${opts.version !== undefined ? `@${opts.version}` : ''}`);
+      console.log(
+        `✅ No known vulnerabilities for ${opts.package}${opts.version !== undefined ? `@${opts.version}` : ''}`,
+      );
       return;
     }
 
-    console.log(`\n⚠️  ${vulns.length.toString()} vulnerabilit${vulns.length === 1 ? 'y' : 'ies'} found:\n`);
+    console.log(
+      `\n⚠️  ${vulns.length.toString()} vulnerabilit${vulns.length === 1 ? 'y' : 'ies'} found:\n`,
+    );
     for (const v of vulns) {
       console.log(`  ${v.id}`);
       console.log(`    ${v.summary ?? '(no summary)'}`);
