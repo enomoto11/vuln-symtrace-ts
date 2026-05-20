@@ -27,7 +27,7 @@ This lets you focus on the handful of alerts that represent real exposure instea
 3. For each vulnerable package, use ts-morph to check whether your code imports it
 4. Classify impact and report results
 
-Import detection covers static imports, dynamic `import()`, `require()`, and re-exports (`export ... from`). Type-only imports are ignored since they are erased at compile time.
+Import detection covers static imports, dynamic `import()`, `require()`, and re-exports (`export ... from`), including subpath imports such as `lodash/get` and scoped subpaths like `@scope/pkg/sub` — these are resolved back to their package. Type-only imports are ignored since they are erased at compile time.
 
 ## Usage
 
