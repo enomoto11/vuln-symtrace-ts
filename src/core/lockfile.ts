@@ -224,7 +224,7 @@ function parseYarnLock(lockfilePath: string): readonly InstalledPackage[] {
   const content = readFileSync(lockfilePath, 'utf8');
   if (content.includes('__metadata:')) {
     throw new Error(
-      'Yarn Berry (v2+) lockfiles are not supported yet. Phase 1 supports yarn v1 (classic).',
+      'Yarn Berry (v2+) lockfiles are not supported yet — only yarn v1 (classic) is supported.',
     );
   }
 
