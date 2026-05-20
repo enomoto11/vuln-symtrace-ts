@@ -50,9 +50,9 @@ function collectStaticImports(
 ): void {
   for (const decl of file.getImportDeclarations()) {
     if (isTypeOnlyImport(decl)) continue;
-    const moduleName = decl.getModuleSpecifierValue();
-    if (targets.has(moduleName)) {
-      result.get(moduleName)?.push(toCodeUsage(file, decl, moduleName));
+    const pkg = packageNameOf(decl.getModuleSpecifierValue());
+    if (pkg !== undefined && targets.has(pkg)) {
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg));
     }
   }
 }
@@ -67,8 +67,9 @@ function collectReExports(
     // An export with no module specifier is a local export, not a re-export.
     if (moduleName === undefined) continue;
     if (isTypeOnlyExport(decl)) continue;
-    if (targets.has(moduleName)) {
-      result.get(moduleName)?.push(toCodeUsage(file, decl, moduleName));
+    const pkg = packageNameOf(moduleName);
+    if (pkg !== undefined && targets.has(pkg)) {
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg));
     }
   }
 }
@@ -80,8 +81,10 @@ function collectDynamicImports(
 ): void {
   for (const call of file.getDescendantsOfKind(SyntaxKind.CallExpression)) {
     const moduleName = getDynamicModuleName(call);
-    if (moduleName !== undefined && targets.has(moduleName)) {
-      result.get(moduleName)?.push(toCodeUsage(file, call, moduleName));
+    if (moduleName === undefined) continue;
+    const pkg = packageNameOf(moduleName);
+    if (pkg !== undefined && targets.has(pkg)) {
+      result.get(pkg)?.push(toCodeUsage(file, call, pkg));
     }
   }
 }
@@ -128,6 +131,33 @@ function getDynamicModuleName(call: CallExpression): string | undefined {
   const firstArg = call.getArguments()[0];
   const literal = firstArg?.asKind(SyntaxKind.StringLiteral);
   return literal?.getLiteralValue();
+}
+
+/**
+ * Extracts the npm package name from an import module specifier, so that a
+ * subpath import resolves to the package it belongs to:
+ * `lodash/get` -> `lodash`, `@scope/pkg/sub` -> `@scope/pkg`.
+ *
+ * Returns undefined when the specifier is not an npm package — relative
+ * imports (`./x`, `../x`), absolute paths, and Node built-ins (`node:fs`).
+ */
+function packageNameOf(specifier: string): string | undefined {
+  if (specifier === '' || specifier.startsWith('.') || specifier.startsWith('/')) {
+    return undefined;
+  }
+  if (specifier.startsWith('node:')) {
+    return undefined;
+  }
+
+  const [first, second] = specifier.split('/');
+  if (specifier.startsWith('@')) {
+    // Scoped package: the name spans the first two segments (`@scope/name`).
+    if (first === undefined || first === '@' || second === undefined || second === '') {
+      return undefined;
+    }
+    return `${first}/${second}`;
+  }
+  return first;
 }
 
 function toCodeUsage(file: SourceFile, node: Node, symbol: string): CodeUsage {

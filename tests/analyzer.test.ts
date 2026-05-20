@@ -127,3 +127,87 @@ describe('analyzeImports', () => {
     });
   });
 });
+
+describe('analyzeImports — subpath imports', () => {
+  it('detects a subpath static import as a usage of the package', () => {
+    withProject(
+      { 'app.ts': `import get from 'lodash/get';\nexport const x = get;` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('detects a subpath require() call', () => {
+    withProject(
+      { 'app.ts': `const merge = require('lodash/merge');\nexport { merge };` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('detects a subpath dynamic import() expression', () => {
+    withProject(
+      { 'app.ts': `export async function load() {\n  return import('lodash/fp');\n}` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('detects a subpath re-export', () => {
+    withProject(
+      { 'app.ts': `export { default as get } from 'lodash/get';` },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('records the package name (not the subpath) as the usage symbol', () => {
+    withProject(
+      { 'app.ts': `import get from 'lodash/get';\nexport const x = get;` },
+      (tsConfigFilePath) => {
+        const usages = analyzeLodash(tsConfigFilePath).get('lodash');
+        expect(usages?.[0]?.symbol).toBe('lodash');
+      },
+    );
+  });
+
+  it('resolves a scoped-package subpath import to the scoped package', () => {
+    withProject(
+      { 'app.ts': `import { isIP } from '@scope/net/ip';\nexport const x = isIP;` },
+      (tsConfigFilePath) => {
+        const result = analyzeImports({
+          tsConfigFilePath,
+          packageNames: ['@scope/net'],
+        });
+        expect(result.get('@scope/net')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('ignores a type-only subpath import', () => {
+    withProject(
+      {
+        'app.ts': `import type { Getter } from 'lodash/get';\nexport type X = Getter;`,
+      },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toEqual([]);
+      },
+    );
+  });
+
+  it('does not treat a relative import as a package usage', () => {
+    withProject(
+      {
+        'app.ts': `import { x } from './lodash';`,
+        'lodash.ts': `export const x = 1;`,
+      },
+      (tsConfigFilePath) => {
+        expect(analyzeLodash(tsConfigFilePath).get('lodash')).toEqual([]);
+      },
+    );
+  });
+});
