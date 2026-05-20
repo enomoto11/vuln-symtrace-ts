@@ -1,10 +1,50 @@
-import type { ScanResult } from '../core/types.js';
+import type { ScanSummary, VulnerablePackage } from '../core/scan.js';
+import { getSeverity } from '../core/severity.js';
 
-export function formatConsole(results: readonly ScanResult[]): string {
-  // TODO: implement
-  return JSON.stringify(results, null, 2);
+/** Formats a scan result as human-readable console output. */
+export function formatConsole(summary: ScanSummary): string {
+  const transitiveCount = summary.totalPackages - summary.directCount;
+  const lines: string[] = [
+    `📦 ${summary.totalPackages.toString()} dependencies ` +
+      `(direct: ${summary.directCount.toString()}, transitive: ${transitiveCount.toString()})`,
+  ];
+
+  if (summary.vulnerablePackages.length === 0) {
+    lines.push('', '✅ No known vulnerabilities found.');
+    return lines.join('\n');
+  }
+
+  lines.push('', `⚠️  ${summary.vulnerablePackages.length.toString()} vulnerable package(s):`, '');
+  for (const vp of summary.vulnerablePackages) {
+    lines.push(...formatPackage(vp), '');
+  }
+  return lines.join('\n').trimEnd();
 }
 
-export function formatJson(results: readonly ScanResult[]): string {
-  return JSON.stringify(results, null, 2);
+function formatPackage(vp: VulnerablePackage): string[] {
+  const count = vp.vulnerabilities.length;
+  const lines: string[] = [
+    `  [${vp.impact}] ${vp.pkg.name}@${vp.pkg.version} — ` +
+      `${count.toString()} vulnerabilit${count === 1 ? 'y' : 'ies'}`,
+  ];
+
+  if (vp.impact === 'transitive') {
+    lines.push('    ↳ transitive dependency — import analysis skipped');
+  } else if (vp.impact === 'not-affected') {
+    lines.push('    ↳ direct dependency, but not imported in code');
+  } else {
+    for (const usage of vp.usages) {
+      lines.push(`    ↳ imported at ${usage.file}:${usage.line.toString()}`);
+    }
+  }
+
+  for (const vuln of vp.vulnerabilities) {
+    lines.push(`      [${getSeverity(vuln)}] ${vuln.id} — ${vuln.summary ?? '(no summary)'}`);
+  }
+  return lines;
+}
+
+/** Formats a scan result as JSON for CI consumption. */
+export function formatJson(summary: ScanSummary): string {
+  return JSON.stringify(summary, null, 2);
 }

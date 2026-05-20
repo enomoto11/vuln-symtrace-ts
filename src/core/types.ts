@@ -36,6 +36,8 @@ export const OsvVulnerabilitySchema = z.object({
       }),
     )
     .optional(),
+  // GitHub advisories expose a severity label (LOW/MODERATE/HIGH/CRITICAL) here.
+  database_specific: z.object({ severity: z.string().optional() }).optional(),
 });
 
 export type OsvVulnerability = z.infer<typeof OsvVulnerabilitySchema>;
@@ -56,7 +58,7 @@ export interface RepoConfig {
 
 export interface VulnScopeConfig {
   readonly repos: readonly RepoConfig[];
-  readonly severityThreshold: 'low' | 'moderate' | 'high' | 'critical';
+  readonly severityThreshold: SeverityLevel;
 }
 
 export interface CodeUsage {
@@ -68,6 +70,8 @@ export interface CodeUsage {
 }
 
 export type ImpactLevel = 'affected' | 'needs-review' | 'not-affected' | 'transitive';
+
+export type SeverityLevel = 'low' | 'moderate' | 'high' | 'critical';
 
 export interface RepoImpact {
   readonly repo: RepoConfig;
