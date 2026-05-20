@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { resolve } from 'node:path';
 import { Command } from 'commander';
-import { analyzeUsages } from '../core/analyzer.js';
+import { scanProject } from '../core/scan.js';
 import { queryByPackage } from '../adapters/osv.js';
 
 const program = new Command();
@@ -14,44 +15,45 @@ program
 program
   .command('scan')
   .description('Scan a project for vulnerability impact')
-  .requiredOption('-p, --package <name>', 'npm package name to check')
-  .option('-t, --tsconfig <path>', 'path to tsconfig.json', './tsconfig.json')
-  .option('--apis <apis...>', 'specific APIs to check (e.g. res.redirect)')
-  .action(async (opts: { package: string; tsconfig: string; apis?: string[] }) => {
-    console.log(`\n🔍 Querying OSV for vulnerabilities in "${opts.package}"...\n`);
+  .option('-p, --path <dir>', 'project directory to scan', '.')
+  .option('-t, --tsconfig <file>', 'tsconfig path, relative to --path', 'tsconfig.json')
+  .action(async (opts: { path: string; tsconfig: string }) => {
+    const lockfilePath = resolve(opts.path, 'pnpm-lock.yaml');
+    const tsConfigFilePath = resolve(opts.path, opts.tsconfig);
+    console.log(`\n🔍 Scanning "${opts.path}"...\n`);
 
-    const vulns = await queryByPackage('npm', opts.package);
+    const summary = await scanProject({ lockfilePath, tsConfigFilePath });
+    const transitiveCount = summary.totalPackages - summary.directCount;
 
-    if (vulns.length === 0) {
-      console.log('✅ No known vulnerabilities found.');
+    console.log(
+      `📦 ${summary.totalPackages.toString()} dependencies ` +
+        `(direct: ${summary.directCount.toString()}, transitive: ${transitiveCount.toString()})`,
+    );
+
+    if (summary.vulnerablePackages.length === 0) {
+      console.log('\n✅ No known vulnerabilities found.');
       return;
     }
 
-    console.log(
-      `⚠️  Found ${vulns.length.toString()} vulnerabilit${vulns.length === 1 ? 'y' : 'ies'}:\n`,
-    );
-    for (const v of vulns) {
-      const aliases = v.aliases?.join(', ') ?? 'none';
-      console.log(`  ${v.id} — ${v.summary ?? '(no summary)'}`);
-      console.log(`    Aliases: ${aliases}\n`);
-    }
-
-    console.log(`\n🔬 Analyzing code usage in project (${opts.tsconfig})...\n`);
-
-    const usages = analyzeUsages({
-      tsConfigFilePath: opts.tsconfig,
-      packageName: opts.package,
-      affectedApis: opts.apis,
-    });
-
-    if (usages.length === 0) {
-      console.log('✅ Package is in dependencies but no affected API usage found.');
-    } else {
-      console.log(`🔴 Found ${usages.length.toString()} usage(s):\n`);
-      for (const u of usages) {
-        console.log(`  ${u.file}:${u.line.toString()}:${u.column.toString()}`);
-        console.log(`    ${u.code}\n`);
+    console.log(`\n⚠️  ${summary.vulnerablePackages.length.toString()} vulnerable package(s):\n`);
+    for (const vp of summary.vulnerablePackages) {
+      const count = vp.vulnerabilities.length;
+      console.log(
+        `  [${vp.impact}] ${vp.pkg.name}@${vp.pkg.version} — ${count.toString()} vulnerabilit${count === 1 ? 'y' : 'ies'}`,
+      );
+      if (vp.impact === 'transitive') {
+        console.log('    ↳ transitive dependency — import analysis skipped');
+      } else if (vp.impact === 'not-affected') {
+        console.log('    ↳ direct dependency, but not imported in code');
+      } else {
+        for (const u of vp.usages) {
+          console.log(`    ↳ imported at ${u.file}:${u.line.toString()}`);
+        }
       }
+      for (const v of vp.vulnerabilities) {
+        console.log(`      ${v.id} — ${v.summary ?? '(no summary)'}`);
+      }
+      console.log();
     }
   });
 

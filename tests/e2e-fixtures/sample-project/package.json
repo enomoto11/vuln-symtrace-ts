@@ -2,9 +2,12 @@
   "name": "vuln-scope-e2e-fixture",
   "version": "0.0.0",
   "private": true,
-  "description": "Fixture project for vuln-scope e2e tests. Contains intentionally outdated, vulnerable dependencies.",
+  "description": "Fixture project for vuln-scope e2e tests. Contains intentionally outdated, vulnerable dependencies covering every impact level.",
   "dependencies": {
-    "lodash": "4.17.20",
-    "minimist": "1.2.5"
+    "lodash": "4.17.20"
+  },
+  "devDependencies": {
+    "semver": "5.7.1",
+    "mkdirp": "0.5.1"
   }
 }

@@ -1,11 +1,14 @@
-export { analyzeUsages, type AnalyzeOptions } from './analyzer.js';
+export { analyzeImports, type AnalyzeImportsOptions } from './analyzer.js';
+export { parseLockfile } from './lockfile.js';
+export { scanProject, type ScanOptions, type VulnerablePackage, type ScanSummary } from './scan.js';
 export type {
   OsvVulnerability,
   RepoConfig,
   VulnScopeConfig,
+  InstalledPackage,
   CodeUsage,
   ImpactLevel,
   RepoImpact,
   ScanResult,
 } from './types.js';
-export { queryByPackage } from '../adapters/osv.js';
+export { queryByPackage, queryBatch } from '../adapters/osv.js';

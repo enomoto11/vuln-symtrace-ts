@@ -42,6 +42,12 @@ export type OsvVulnerability = z.infer<typeof OsvVulnerabilitySchema>;
 
 // --- vuln-scope internal model ---
 
+export interface InstalledPackage {
+  readonly name: string;
+  readonly version: string;
+  readonly isDirect: boolean;
+}
+
 export interface RepoConfig {
   readonly name: string;
   readonly path: string;
@@ -61,7 +67,7 @@ export interface CodeUsage {
   readonly symbol: string;
 }
 
-export type ImpactLevel = 'affected' | 'needs-review' | 'not-affected';
+export type ImpactLevel = 'affected' | 'needs-review' | 'not-affected' | 'transitive';
 
 export interface RepoImpact {
   readonly repo: RepoConfig;

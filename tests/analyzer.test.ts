@@ -1,66 +1,81 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeUsages } from '../src/core/analyzer.js';
+import { analyzeImports } from '../src/core/analyzer.js';
 import { resolve } from 'node:path';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
-const FIXTURE_DIR = resolve(import.meta.dirname, '__fixtures__');
+const TSCONFIG = JSON.stringify({
+  compilerOptions: {
+    target: 'ES2022',
+    module: 'Node16',
+    moduleResolution: 'Node16',
+  },
+  include: ['*.ts'],
+});
 
-function setupFixture(files: Record<string, string>): void {
-  mkdirSync(FIXTURE_DIR, { recursive: true });
-  for (const [name, content] of Object.entries(files)) {
-    writeFileSync(resolve(FIXTURE_DIR, name), content);
+function withProject(
+  files: Record<string, string>,
+  run: (tsConfigFilePath: string) => void,
+): void {
+  const dir = mkdtempSync(resolve(tmpdir(), 'vuln-scope-analyzer-'));
+  try {
+    writeFileSync(resolve(dir, 'tsconfig.json'), TSCONFIG);
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(resolve(dir, name), content);
+    }
+    run(resolve(dir, 'tsconfig.json'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
-function cleanFixture(): void {
-  rmSync(FIXTURE_DIR, { recursive: true, force: true });
-}
-
-describe('analyzeUsages', () => {
-  it('detects direct import of a package', () => {
-    setupFixture({
-      'tsconfig.json': JSON.stringify({
-        compilerOptions: { target: 'ES2022', module: 'Node16', moduleResolution: 'Node16' },
-        include: ['*.ts'],
-      }),
-      'app.ts': `
-import express from 'express';
-const app = express();
-app.get('/', (req, res) => res.send('ok'));
-`,
-    });
-
-    try {
-      const usages = analyzeUsages({
-        tsConfigFilePath: resolve(FIXTURE_DIR, 'tsconfig.json'),
-        packageName: 'express',
-      });
-
-      expect(usages.length).toBeGreaterThan(0);
-      expect(usages[0]?.symbol).toBe('express');
-    } finally {
-      cleanFixture();
-    }
+describe('analyzeImports', () => {
+  it('detects a static import', () => {
+    withProject(
+      { 'app.ts': `import { merge } from 'lodash';\nexport const x = merge;` },
+      (tsConfigFilePath) => {
+        const result = analyzeImports({
+          tsConfigFilePath,
+          packageNames: ['lodash'],
+        });
+        expect(result.get('lodash')).toHaveLength(1);
+      },
+    );
   });
 
-  it('returns empty when package is not imported', () => {
-    setupFixture({
-      'tsconfig.json': JSON.stringify({
-        compilerOptions: { target: 'ES2022', module: 'Node16', moduleResolution: 'Node16' },
-        include: ['*.ts'],
-      }),
-      'app.ts': `const x = 1;`,
-    });
+  it('detects a dynamic import() expression', () => {
+    withProject(
+      { 'app.ts': `export async function load() {\n  return import('lodash');\n}` },
+      (tsConfigFilePath) => {
+        const result = analyzeImports({
+          tsConfigFilePath,
+          packageNames: ['lodash'],
+        });
+        expect(result.get('lodash')).toHaveLength(1);
+      },
+    );
+  });
 
-    try {
-      const usages = analyzeUsages({
-        tsConfigFilePath: resolve(FIXTURE_DIR, 'tsconfig.json'),
-        packageName: 'express',
+  it('detects a require() call', () => {
+    withProject(
+      { 'app.ts': `const lodash = require('lodash');\nexport { lodash };` },
+      (tsConfigFilePath) => {
+        const result = analyzeImports({
+          tsConfigFilePath,
+          packageNames: ['lodash'],
+        });
+        expect(result.get('lodash')).toHaveLength(1);
+      },
+    );
+  });
+
+  it('returns an empty array for a package that is never imported', () => {
+    withProject({ 'app.ts': `export const x = 1;` }, (tsConfigFilePath) => {
+      const result = analyzeImports({
+        tsConfigFilePath,
+        packageNames: ['lodash'],
       });
-
-      expect(usages).toHaveLength(0);
-    } finally {
-      cleanFixture();
-    }
+      expect(result.get('lodash')).toEqual([]);
+    });
   });
 });

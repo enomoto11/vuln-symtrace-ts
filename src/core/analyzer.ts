@@ -1,80 +1,86 @@
-import { Project, SyntaxKind, type SourceFile } from 'ts-morph';
+import { Project, SyntaxKind, type CallExpression, type Node, type SourceFile } from 'ts-morph';
 import type { CodeUsage } from './types.js';
 
-export interface AnalyzeOptions {
+export interface AnalyzeImportsOptions {
   readonly tsConfigFilePath: string;
-  readonly packageName: string;
-  readonly affectedApis?: readonly string[] | undefined;
+  readonly packageNames: readonly string[];
 }
 
 /**
- * Detects usages of the specified package within the project.
+ * Detects where each given package is imported within a TypeScript project.
+ * Covers static imports, dynamic `import()` expressions, and `require()` calls.
  *
- * If affectedApis is specified, only returns call sites of those APIs.
- * If unspecified, returns all import sites (for overview of impact scope).
+ * Returns a map from package name to its usage sites (empty array if unused).
  */
-export function analyzeUsages(options: AnalyzeOptions): readonly CodeUsage[] {
+export function analyzeImports(options: AnalyzeImportsOptions): Map<string, CodeUsage[]> {
   const project = new Project({
     tsConfigFilePath: options.tsConfigFilePath,
     skipAddingFilesFromTsConfig: false,
   });
 
-  const sourceFiles = project.getSourceFiles();
-  const usages: CodeUsage[] = [];
-
-  for (const file of sourceFiles) {
-    const imports = file
-      .getImportDeclarations()
-      .filter((i) => i.getModuleSpecifierValue() === options.packageName);
-
-    if (imports.length === 0) continue;
-
-    if (options.affectedApis !== undefined && options.affectedApis.length > 0) {
-      usages.push(...findAffectedApiCalls(file, options.affectedApis));
-    } else {
-      // affectedApis unspecified: report the imports themselves
-      for (const imp of imports) {
-        usages.push({
-          file: file.getFilePath(),
-          line: imp.getStartLineNumber(),
-          column: imp.getStart() - imp.getStartLinePos(),
-          code: imp.getText(),
-          symbol: options.packageName,
-        });
-      }
-    }
+  const targets = new Set(options.packageNames);
+  const result = new Map<string, CodeUsage[]>();
+  for (const name of targets) {
+    result.set(name, []);
   }
 
-  return usages;
+  for (const file of project.getSourceFiles()) {
+    collectStaticImports(file, targets, result);
+    collectDynamicImports(file, targets, result);
+  }
+
+  return result;
 }
 
-function findAffectedApiCalls(
+function collectStaticImports(
   file: SourceFile,
-  affectedApis: readonly string[],
-): readonly CodeUsage[] {
-  const results: CodeUsage[] = [];
-
-  const calls = file.getDescendantsOfKind(SyntaxKind.CallExpression);
-
-  for (const call of calls) {
-    const expr = call.getExpression();
-    const symbol = expr.getSymbol();
-    const fqn = symbol?.getFullyQualifiedName() ?? expr.getText();
-
-    const isAffected = affectedApis.some(
-      (api) => fqn.includes(api) || expr.getText().includes(api),
-    );
-
-    if (isAffected) {
-      results.push({
-        file: file.getFilePath(),
-        line: call.getStartLineNumber(),
-        column: call.getStart() - call.getStartLinePos(),
-        code: call.getText(),
-        symbol: fqn,
-      });
+  targets: ReadonlySet<string>,
+  result: Map<string, CodeUsage[]>,
+): void {
+  for (const decl of file.getImportDeclarations()) {
+    const moduleName = decl.getModuleSpecifierValue();
+    if (targets.has(moduleName)) {
+      result.get(moduleName)?.push(toCodeUsage(file, decl, moduleName));
     }
   }
+}
 
-  return results;
+function collectDynamicImports(
+  file: SourceFile,
+  targets: ReadonlySet<string>,
+  result: Map<string, CodeUsage[]>,
+): void {
+  for (const call of file.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const moduleName = getDynamicModuleName(call);
+    if (moduleName !== undefined && targets.has(moduleName)) {
+      result.get(moduleName)?.push(toCodeUsage(file, call, moduleName));
+    }
+  }
+}
+
+/**
+ * Returns the module name of a dynamic `import('x')` or `require('x')` call,
+ * or undefined if the call is neither (or its argument is not a string literal).
+ */
+function getDynamicModuleName(call: CallExpression): string | undefined {
+  const expr = call.getExpression();
+  const isDynamicImport = expr.getKind() === SyntaxKind.ImportKeyword;
+  const isRequire = expr.getKind() === SyntaxKind.Identifier && expr.getText() === 'require';
+  if (!isDynamicImport && !isRequire) {
+    return undefined;
+  }
+
+  const firstArg = call.getArguments()[0];
+  const literal = firstArg?.asKind(SyntaxKind.StringLiteral);
+  return literal?.getLiteralValue();
+}
+
+function toCodeUsage(file: SourceFile, node: Node, symbol: string): CodeUsage {
+  return {
+    file: file.getFilePath(),
+    line: node.getStartLineNumber(),
+    column: node.getStart() - node.getStartLinePos(),
+    code: node.getText(),
+    symbol,
+  };
 }
