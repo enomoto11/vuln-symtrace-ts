@@ -1,10 +1,16 @@
 import { OsvVulnerabilitySchema, type OsvVulnerability } from '../core/types.js';
+import { postJson } from '../utils/http.js';
+import { mapWithConcurrency } from '../utils/concurrency.js';
 import { z } from 'zod';
 
 const OSV_API_BASE = 'https://api.osv.dev/v1';
 
 // OSV querybatch accepts at most 1000 queries per request.
 const BATCH_LIMIT = 1000;
+
+// Upper bound on concurrent detail queries, so a vuln-heavy project does not
+// fire hundreds of simultaneous requests at the OSV API.
+const DETAIL_QUERY_CONCURRENCY = 8;
 
 const OsvQueryResponseSchema = z.object({
   vulns: z.array(OsvVulnerabilitySchema).optional(),
@@ -34,17 +40,7 @@ export async function queryByPackage(
     body['version'] = version;
   }
 
-  const response = await fetch(`${OSV_API_BASE}/query`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    throw new Error(`OSV API error: ${response.status.toString()} ${response.statusText}`);
-  }
-
-  const data: unknown = await response.json();
+  const data = await postJson(`${OSV_API_BASE}/query`, body, { errorLabel: 'OSV API' });
   const parsed = OsvQueryResponseSchema.parse(data);
 
   return parsed.vulns ?? [];
@@ -70,17 +66,11 @@ export async function queryBatch(
       version: pkg.version,
     }));
 
-    const response = await fetch(`${OSV_API_BASE}/querybatch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ queries }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`OSV API error: ${response.status.toString()} ${response.statusText}`);
-    }
-
-    const data: unknown = await response.json();
+    const data = await postJson(
+      `${OSV_API_BASE}/querybatch`,
+      { queries },
+      { errorLabel: 'OSV API' },
+    );
     const parsed = OsvBatchResponseSchema.parse(data);
 
     parsed.results.forEach((result, index) => {
@@ -92,12 +82,11 @@ export async function queryBatch(
     });
   }
 
-  const detailed = await Promise.all(
-    vulnerable.map(async (pkg) => {
-      const vulns = await queryByPackage(ecosystem, pkg.name, pkg.version);
-      return [`${pkg.name}@${pkg.version}`, vulns] as const;
-    }),
-  );
+  // Detail queries are bounded so a vuln-heavy project does not overwhelm OSV.
+  const detailed = await mapWithConcurrency(vulnerable, DETAIL_QUERY_CONCURRENCY, async (pkg) => {
+    const vulns = await queryByPackage(ecosystem, pkg.name, pkg.version);
+    return [`${pkg.name}@${pkg.version}`, vulns] as const;
+  });
 
   return new Map(detailed);
 }
