@@ -4,6 +4,7 @@ import {
   SyntaxKind,
   type CallExpression,
   type ExportDeclaration,
+  type Identifier,
   type ImportDeclaration,
   type ImportSpecifier,
   type SourceFile,
@@ -53,15 +54,35 @@ function collectStaticImports(
     if (isTypeOnlyImport(decl)) continue;
     const pkg = packageNameOf(decl.getModuleSpecifierValue());
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, resolveNamedImports(decl)));
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, resolveImportUsages(decl)));
     }
   }
 }
 
 /**
+ * Resolves every binding of an import declaration — named, default, and
+ * namespace — to its export-level usages. A side-effect import (`import 'pkg'`)
+ * has no bindings and yields an empty list.
+ */
+function resolveImportUsages(decl: ImportDeclaration): ExportUsage[] {
+  const usages = resolveNamedImports(decl);
+
+  const defaultImport = decl.getDefaultImport();
+  if (defaultImport !== undefined) {
+    usages.push(...resolveMemberAccessImport(decl, defaultImport));
+  }
+
+  const namespaceImport = decl.getNamespaceImport();
+  if (namespaceImport !== undefined) {
+    usages.push(...resolveMemberAccessImport(decl, namespaceImport));
+  }
+
+  return usages;
+}
+
+/**
  * Resolves the named imports of a declaration (`import { merge, get } from ...`)
- * to their export-level usages. Type-only specifiers are skipped. Default and
- * namespace imports are handled separately and contribute nothing here.
+ * to their export-level usages. Type-only specifiers are skipped.
  */
 function resolveNamedImports(decl: ImportDeclaration): ExportUsage[] {
   const usages: ExportUsage[] = [];
@@ -102,13 +123,66 @@ function isWithinImport(node: Node): boolean {
   return node.getFirstAncestorByKind(SyntaxKind.ImportDeclaration) !== undefined;
 }
 
+/**
+ * Resolves a default or namespace import binding (`_`) to its usages by
+ * resolving each property access on it (`_.merge`) to an export name. Passing
+ * the binding around whole, or deeper chains, yields a null export name.
+ */
+function resolveMemberAccessImport(decl: ImportDeclaration, binding: Identifier): ExportUsage[] {
+  const refs: ExportUsage[] = [];
+  for (const ref of binding.findReferencesAsNodes()) {
+    if (isWithinImport(ref)) continue;
+    refs.push(memberUsageOf(ref));
+  }
+  return refs.length > 0 ? refs : [importUsage(decl, null)];
+}
+
+/**
+ * Resolves one reference to a default/namespace binding. A single property or
+ * element access (`_.merge`, `_['merge']`) yields the export name; anything
+ * else yields a null export name.
+ */
+function memberUsageOf(ref: Node): ExportUsage {
+  const parent = ref.getParent();
+  let exportName: string | null = null;
+  let kind: ReferenceKind = 'reference';
+
+  if (
+    parent !== undefined &&
+    Node.isPropertyAccessExpression(parent) &&
+    parent.getExpression() === ref
+  ) {
+    exportName = parent.getName();
+    kind = isCalleeOf(parent) ? 'call' : 'member-access';
+  } else if (
+    parent !== undefined &&
+    Node.isElementAccessExpression(parent) &&
+    parent.getExpression() === ref
+  ) {
+    const arg = parent.getArgumentExpression();
+    exportName = arg !== undefined && Node.isStringLiteral(arg) ? arg.getLiteralValue() : null;
+    kind = isCalleeOf(parent) ? 'call' : 'member-access';
+  }
+
+  return {
+    exportName,
+    kind,
+    file: ref.getSourceFile().getFilePath(),
+    line: ref.getStartLineNumber(),
+    column: ref.getStart() - ref.getStartLinePos(),
+    code: (parent ?? ref).getText(),
+  };
+}
+
 /** Classifies a reference node: a callee position is a `call`, anything else a `reference`. */
 function referenceKindOf(ref: Node): ReferenceKind {
-  const parent = ref.getParent();
-  if (parent !== undefined && Node.isCallExpression(parent) && parent.getExpression() === ref) {
-    return 'call';
-  }
-  return 'reference';
+  return isCalleeOf(ref) ? 'call' : 'reference';
+}
+
+/** True when `node` sits in the callee position of a call expression (`node(...)`). */
+function isCalleeOf(node: Node): boolean {
+  const parent = node.getParent();
+  return parent !== undefined && Node.isCallExpression(parent) && parent.getExpression() === node;
 }
 
 /** Builds an `ExportUsage` for a resolved reference node. */
