@@ -50,17 +50,6 @@ export interface InstalledPackage {
   readonly isDirect: boolean;
 }
 
-export interface RepoConfig {
-  readonly name: string;
-  readonly path: string;
-  readonly tsconfig: string;
-}
-
-export interface VulnScopeConfig {
-  readonly repos: readonly RepoConfig[];
-  readonly severityThreshold: SeverityLevel;
-}
-
 export interface CodeUsage {
   readonly file: string;
   readonly line: number;
@@ -69,20 +58,6 @@ export interface CodeUsage {
   readonly symbol: string;
 }
 
-export type ImpactLevel = 'affected' | 'needs-review' | 'not-affected' | 'transitive';
+export type ImpactLevel = 'needs-review' | 'not-affected' | 'transitive';
 
 export type SeverityLevel = 'low' | 'moderate' | 'high' | 'critical';
-
-export interface RepoImpact {
-  readonly repo: RepoConfig;
-  readonly installedVersion: string | undefined;
-  readonly impact: ImpactLevel;
-  readonly usages: readonly CodeUsage[];
-}
-
-export interface ScanResult {
-  readonly vulnerability: OsvVulnerability;
-  readonly packageName: string;
-  readonly repoImpacts: readonly RepoImpact[];
-  readonly scannedAt: Date;
-}
