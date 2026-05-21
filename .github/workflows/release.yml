@@ -1,0 +1,49 @@
+name: Release
+
+# Publishes to npm when a version tag (e.g. v0.1.0) is pushed.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  # Required for npm publish provenance attestation.
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${PKG}"
+            exit 1
+          fi
+
+      # `npm publish` runs prepublishOnly (typecheck / lint / format / test /
+      # build), so a failing check aborts the release.
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
