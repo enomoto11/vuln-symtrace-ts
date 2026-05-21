@@ -50,12 +50,42 @@ export interface InstalledPackage {
   readonly isDirect: boolean;
 }
 
+/**
+ * How an exported symbol of a vulnerable package is referenced at a site:
+ * - `import`        — the import/re-export statement itself (no resolved reference)
+ * - `call`          — the export is called, e.g. `merge(a, b)`
+ * - `member-access` — reached via property access, e.g. `_.merge`
+ * - `reference`     — any other identifier reference (passed as an argument, etc.)
+ * - `re-export`     — forwarded by `export ... from`
+ */
+export type ReferenceKind = 'import' | 'call' | 'member-access' | 'reference' | 're-export';
+
+/** A single reference to an exported symbol of a vulnerable package. */
+export interface ExportUsage {
+  /** Exported symbol name, or null when it cannot be determined (e.g. `export *`). */
+  readonly exportName: string | null;
+  readonly kind: ReferenceKind;
+  readonly file: string;
+  readonly line: number;
+  readonly column: number;
+  readonly code: string;
+}
+
 export interface CodeUsage {
   readonly file: string;
   readonly line: number;
   readonly column: number;
   readonly code: string;
   readonly symbol: string;
+  /** Exports of the package used through this import / re-export site. */
+  readonly exportUsages: readonly ExportUsage[];
+}
+
+/** A package export aggregated across all of its reference sites. */
+export interface UsedExport {
+  /** Exported symbol name, or null when it cannot be determined. */
+  readonly name: string | null;
+  readonly refs: readonly ExportUsage[];
 }
 
 export type ImpactLevel = 'needs-review' | 'not-affected' | 'transitive';

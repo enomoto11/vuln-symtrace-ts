@@ -67,6 +67,7 @@ const SUMMARY: ScanSummary = {
       ],
       impact: 'needs-review',
       usages: [],
+      usedExports: [],
     },
   ],
 };

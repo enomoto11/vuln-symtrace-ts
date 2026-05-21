@@ -7,7 +7,7 @@ import {
   type Node,
   type SourceFile,
 } from 'ts-morph';
-import type { CodeUsage } from './types.js';
+import type { CodeUsage, ExportUsage } from './types.js';
 
 export interface AnalyzeImportsOptions {
   readonly tsConfigFilePath: string;
@@ -52,7 +52,7 @@ function collectStaticImports(
     if (isTypeOnlyImport(decl)) continue;
     const pkg = packageNameOf(decl.getModuleSpecifierValue());
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, decl, pkg));
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, []));
     }
   }
 }
@@ -69,7 +69,7 @@ function collectReExports(
     if (isTypeOnlyExport(decl)) continue;
     const pkg = packageNameOf(moduleName);
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, decl, pkg));
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, []));
     }
   }
 }
@@ -84,7 +84,7 @@ function collectDynamicImports(
     if (moduleName === undefined) continue;
     const pkg = packageNameOf(moduleName);
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, call, pkg));
+      result.get(pkg)?.push(toCodeUsage(file, call, pkg, []));
     }
   }
 }
@@ -160,12 +160,18 @@ function packageNameOf(specifier: string): string | undefined {
   return first;
 }
 
-function toCodeUsage(file: SourceFile, node: Node, symbol: string): CodeUsage {
+function toCodeUsage(
+  file: SourceFile,
+  node: Node,
+  symbol: string,
+  exportUsages: readonly ExportUsage[],
+): CodeUsage {
   return {
     file: file.getFilePath(),
     line: node.getStartLineNumber(),
     column: node.getStart() - node.getStartLinePos(),
     code: node.getText(),
     symbol,
+    exportUsages,
   };
 }
