@@ -33,6 +33,11 @@ const STOP_WORDS: ReadonlySet<string> = new Set([
   'vulnerable',
   'attacker',
   'user',
+  // Short JS keywords that read as identifiers but are never a flagged export.
+  'in',
+  'of',
+  'as',
+  'if',
 ]);
 
 /**
