@@ -1,13 +1,14 @@
 import {
+  Node,
   Project,
   SyntaxKind,
   type CallExpression,
   type ExportDeclaration,
   type ImportDeclaration,
-  type Node,
+  type ImportSpecifier,
   type SourceFile,
 } from 'ts-morph';
-import type { CodeUsage, ExportUsage } from './types.js';
+import type { CodeUsage, ExportUsage, ReferenceKind } from './types.js';
 
 export interface AnalyzeImportsOptions {
   readonly tsConfigFilePath: string;
@@ -52,9 +53,86 @@ function collectStaticImports(
     if (isTypeOnlyImport(decl)) continue;
     const pkg = packageNameOf(decl.getModuleSpecifierValue());
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, []));
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, resolveNamedImports(decl)));
     }
   }
+}
+
+/**
+ * Resolves the named imports of a declaration (`import { merge, get } from ...`)
+ * to their export-level usages. Type-only specifiers are skipped. Default and
+ * namespace imports are handled separately and contribute nothing here.
+ */
+function resolveNamedImports(decl: ImportDeclaration): ExportUsage[] {
+  const usages: ExportUsage[] = [];
+  for (const specifier of decl.getNamedImports()) {
+    if (specifier.isTypeOnly()) continue;
+    usages.push(...resolveImportSpecifier(decl, specifier));
+  }
+  return usages;
+}
+
+/**
+ * Resolves one named import specifier to its usages: every place the imported
+ * binding is referenced, or a single `import`-kind entry when it is imported
+ * but never used. `getName()` returns the exported name even when aliased,
+ * while references are found through the local binding (the alias if present).
+ */
+function resolveImportSpecifier(
+  decl: ImportDeclaration,
+  specifier: ImportSpecifier,
+): ExportUsage[] {
+  const exportName = specifier.getName();
+  const binding = specifier.getAliasNode() ?? specifier.getNameNode();
+  // A string-literal module export name always carries an identifier alias, so
+  // in valid code `binding` is an Identifier; guard for the type system anyway.
+  if (!Node.isIdentifier(binding)) {
+    return [importUsage(decl, exportName)];
+  }
+  const refs: ExportUsage[] = [];
+  for (const ref of binding.findReferencesAsNodes()) {
+    if (isWithinImport(ref)) continue;
+    refs.push(exportUsageOf(ref, exportName));
+  }
+  return refs.length > 0 ? refs : [importUsage(decl, exportName)];
+}
+
+/** A node is the import binding itself (not a usage) when it sits inside an import. */
+function isWithinImport(node: Node): boolean {
+  return node.getFirstAncestorByKind(SyntaxKind.ImportDeclaration) !== undefined;
+}
+
+/** Classifies a reference node: a callee position is a `call`, anything else a `reference`. */
+function referenceKindOf(ref: Node): ReferenceKind {
+  const parent = ref.getParent();
+  if (parent !== undefined && Node.isCallExpression(parent) && parent.getExpression() === ref) {
+    return 'call';
+  }
+  return 'reference';
+}
+
+/** Builds an `ExportUsage` for a resolved reference node. */
+function exportUsageOf(ref: Node, exportName: string | null): ExportUsage {
+  return {
+    exportName,
+    kind: referenceKindOf(ref),
+    file: ref.getSourceFile().getFilePath(),
+    line: ref.getStartLineNumber(),
+    column: ref.getStart() - ref.getStartLinePos(),
+    code: (ref.getParent() ?? ref).getText(),
+  };
+}
+
+/** Builds an `import`-kind `ExportUsage` for an export that is imported but unused. */
+function importUsage(node: Node, exportName: string | null): ExportUsage {
+  return {
+    exportName,
+    kind: 'import',
+    file: node.getSourceFile().getFilePath(),
+    line: node.getStartLineNumber(),
+    column: node.getStart() - node.getStartLinePos(),
+    code: node.getText(),
+  };
 }
 
 function collectReExports(

@@ -211,3 +211,72 @@ describe('analyzeImports — subpath imports', () => {
     );
   });
 });
+
+describe('analyzeImports — export-level usage (named imports)', () => {
+  it('records a called named import as a call usage', () => {
+    withProject(
+      { 'app.ts': `import { merge } from 'lodash';\nexport const x = merge({}, {});` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toHaveLength(1);
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'merge', kind: 'call' });
+      },
+    );
+  });
+
+  it('resolves an aliased named import to its exported name', () => {
+    withProject(
+      { 'app.ts': `import { merge as m } from 'lodash';\nexport const x = m({}, {});` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'merge', kind: 'call' });
+      },
+    );
+  });
+
+  it('marks an imported-but-unused export with kind "import"', () => {
+    withProject(
+      { 'app.ts': `import { merge } from 'lodash';\nexport const x = 1;` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: 'merge', kind: 'import' }),
+        ]);
+      },
+    );
+  });
+
+  it('records a named import passed as a value as a reference usage', () => {
+    withProject(
+      { 'app.ts': `import { merge } from 'lodash';\nexport const ref = merge;` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'merge', kind: 'reference' });
+      },
+    );
+  });
+
+  it('extracts only the value export when types are mixed in', () => {
+    withProject(
+      {
+        'app.ts': `import { type Dictionary, merge } from 'lodash';\nexport const x = merge({}, {});\nexport type X = Dictionary<number>;`,
+      },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages.map((u) => u.exportName)).toEqual(['merge']);
+      },
+    );
+  });
+
+  it('records each reference site of a multiply-used export', () => {
+    withProject(
+      {
+        'app.ts': `import { merge } from 'lodash';\nexport const a = merge({}, {});\nexport const b = merge({}, {});`,
+      },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toHaveLength(2);
+      },
+    );
+  });
+});
