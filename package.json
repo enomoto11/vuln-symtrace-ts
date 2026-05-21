@@ -2,13 +2,19 @@
   "name": "vuln-symtrace-ts",
   "version": "0.1.0",
   "description": "Detect whether your code is actually affected by known vulnerabilities, not just your dependency tree.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enomoto11/vuln-symtrace-ts.git"
+  },
+  "homepage": "https://github.com/enomoto11/vuln-symtrace-ts#readme",
+  "bugs": "https://github.com/enomoto11/vuln-symtrace-ts/issues",
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
   },
   "packageManager": "pnpm@11.1.3",
   "bin": {
-    "symtrace": "./dist/cli/index.js"
+    "symtrace": "dist/cli/index.js"
   },
   "exports": {
     ".": {
