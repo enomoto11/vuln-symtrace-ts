@@ -63,13 +63,14 @@ async function withProject(
     lockfilePath: string;
     tsConfigFilePath: string;
   }) => Promise<void>,
+  appTs: string = APP_TS,
 ): Promise<void> {
   const dir = mkdtempSync(resolve(tmpdir(), 'vuln-symtrace-ts-scan-'));
   try {
     writeFileSync(resolve(dir, 'pnpm-lock.yaml'), LOCKFILE);
     writeFileSync(resolve(dir, 'tsconfig.json'), TSCONFIG);
     mkdirSync(resolve(dir, 'src'));
-    writeFileSync(resolve(dir, 'src', 'app.ts'), APP_TS);
+    writeFileSync(resolve(dir, 'src', 'app.ts'), appTs);
     await run({
       lockfilePath: resolve(dir, 'pnpm-lock.yaml'),
       tsConfigFilePath: resolve(dir, 'tsconfig.json'),
@@ -126,6 +127,32 @@ describe('scanProject', () => {
         ['vuln-imported@1.0.0', 'vuln-transitive@1.0.0'],
       ]);
     });
+  });
+
+  it('aggregates the exports used by an imported package', async () => {
+    // Only vuln-imported is reported vulnerable (querybatch order: imported, unused, transitive).
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.endsWith('/querybatch')) {
+          return Promise.resolve(jsonResponse({ results: [{ vulns: [{ id: 'V1' }] }, {}, {}] }));
+        }
+        return Promise.resolve(jsonResponse({ vulns: [{ id: 'GHSA-x' }] }));
+      }),
+    );
+
+    await withProject(
+      async (opts) => {
+        const summary = await scanProject(opts);
+        const vp = summary.vulnerablePackages.find((p) => p.pkg.name === 'vuln-imported');
+
+        // `foo` is referenced twice — it collapses to one UsedExport with two refs.
+        expect(vp?.usedExports).toHaveLength(1);
+        expect(vp?.usedExports[0]?.name).toBe('foo');
+        expect(vp?.usedExports[0]?.refs).toHaveLength(2);
+      },
+      `import { foo } from 'vuln-imported';\nexport const a = foo();\nexport const b = foo();`,
+    );
   });
 
   it('reports no vulnerable packages when OSV returns none', async () => {

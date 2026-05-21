@@ -7,6 +7,7 @@ import type {
   OsvVulnerability,
   ImpactLevel,
   CodeUsage,
+  ExportUsage,
   UsedExport,
 } from './types.js';
 
@@ -100,7 +101,13 @@ export async function scanProject(options: ScanOptions): Promise<ScanSummary> {
       }
       const usages = usagesByName.get(pkg.name) ?? [];
       const impact: ImpactLevel = usages.length > 0 ? 'needs-review' : 'not-affected';
-      return { pkg, vulnerabilities: vulns, impact, usages, usedExports: [] };
+      return {
+        pkg,
+        vulnerabilities: vulns,
+        impact,
+        usages,
+        usedExports: aggregateExports(usages),
+      };
     },
   );
 
@@ -109,4 +116,25 @@ export async function scanProject(options: ScanOptions): Promise<ScanSummary> {
     directCount: packages.filter((pkg) => pkg.isDirect).length,
     vulnerablePackages,
   };
+}
+
+/**
+ * Aggregates the per-site export usages of a package into one entry per
+ * exported symbol, so a single export referenced from several import sites
+ * collapses to one `UsedExport`. The unresolved bucket (`name: null`) groups
+ * usages whose export name could not be determined.
+ */
+function aggregateExports(usages: readonly CodeUsage[]): UsedExport[] {
+  const byName = new Map<string | null, ExportUsage[]>();
+  for (const usage of usages) {
+    for (const ref of usage.exportUsages) {
+      let group = byName.get(ref.exportName);
+      if (group === undefined) {
+        group = [];
+        byName.set(ref.exportName, group);
+      }
+      group.push(ref);
+    }
+  }
+  return Array.from(byName, ([name, refs]) => ({ name, refs }));
 }
