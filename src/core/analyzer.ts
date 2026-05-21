@@ -1,13 +1,15 @@
 import {
+  Node,
   Project,
   SyntaxKind,
   type CallExpression,
   type ExportDeclaration,
+  type Identifier,
   type ImportDeclaration,
-  type Node,
+  type ImportSpecifier,
   type SourceFile,
 } from 'ts-morph';
-import type { CodeUsage } from './types.js';
+import type { CodeUsage, ExportUsage, ReferenceKind } from './types.js';
 
 export interface AnalyzeImportsOptions {
   readonly tsConfigFilePath: string;
@@ -52,9 +54,159 @@ function collectStaticImports(
     if (isTypeOnlyImport(decl)) continue;
     const pkg = packageNameOf(decl.getModuleSpecifierValue());
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, decl, pkg));
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, resolveImportUsages(decl)));
     }
   }
+}
+
+/**
+ * Resolves every binding of an import declaration — named, default, and
+ * namespace — to its export-level usages. A side-effect import (`import 'pkg'`)
+ * has no bindings and yields an empty list.
+ */
+function resolveImportUsages(decl: ImportDeclaration): ExportUsage[] {
+  const usages = resolveNamedImports(decl);
+
+  const defaultImport = decl.getDefaultImport();
+  if (defaultImport !== undefined) {
+    usages.push(...resolveMemberAccessImport(decl, defaultImport));
+  }
+
+  const namespaceImport = decl.getNamespaceImport();
+  if (namespaceImport !== undefined) {
+    usages.push(...resolveMemberAccessImport(decl, namespaceImport));
+  }
+
+  return usages;
+}
+
+/**
+ * Resolves the named imports of a declaration (`import { merge, get } from ...`)
+ * to their export-level usages. Type-only specifiers are skipped.
+ */
+function resolveNamedImports(decl: ImportDeclaration): ExportUsage[] {
+  const usages: ExportUsage[] = [];
+  for (const specifier of decl.getNamedImports()) {
+    if (specifier.isTypeOnly()) continue;
+    usages.push(...resolveImportSpecifier(decl, specifier));
+  }
+  return usages;
+}
+
+/**
+ * Resolves one named import specifier to its usages: every place the imported
+ * binding is referenced, or a single `import`-kind entry when it is imported
+ * but never used. `getName()` returns the exported name even when aliased,
+ * while references are found through the local binding (the alias if present).
+ */
+function resolveImportSpecifier(
+  decl: ImportDeclaration,
+  specifier: ImportSpecifier,
+): ExportUsage[] {
+  const exportName = specifier.getName();
+  const binding = specifier.getAliasNode() ?? specifier.getNameNode();
+  // A string-literal module export name always carries an identifier alias, so
+  // in valid code `binding` is an Identifier; guard for the type system anyway.
+  if (!Node.isIdentifier(binding)) {
+    return [importUsage(decl, exportName)];
+  }
+  const refs: ExportUsage[] = [];
+  for (const ref of binding.findReferencesAsNodes()) {
+    if (isWithinImport(ref)) continue;
+    refs.push(exportUsageOf(ref, exportName));
+  }
+  return refs.length > 0 ? refs : [importUsage(decl, exportName)];
+}
+
+/** A node is the import binding itself (not a usage) when it sits inside an import. */
+function isWithinImport(node: Node): boolean {
+  return node.getFirstAncestorByKind(SyntaxKind.ImportDeclaration) !== undefined;
+}
+
+/**
+ * Resolves a default or namespace import binding (`_`) to its usages by
+ * resolving each property access on it (`_.merge`) to an export name. Passing
+ * the binding around whole, or deeper chains, yields a null export name.
+ */
+function resolveMemberAccessImport(decl: ImportDeclaration, binding: Identifier): ExportUsage[] {
+  const refs: ExportUsage[] = [];
+  for (const ref of binding.findReferencesAsNodes()) {
+    if (isWithinImport(ref)) continue;
+    refs.push(memberUsageOf(ref));
+  }
+  return refs.length > 0 ? refs : [importUsage(decl, null)];
+}
+
+/**
+ * Resolves one reference to a default/namespace binding. A single property or
+ * element access (`_.merge`, `_['merge']`) yields the export name; anything
+ * else yields a null export name.
+ */
+function memberUsageOf(ref: Node): ExportUsage {
+  const parent = ref.getParent();
+  let exportName: string | null = null;
+  let kind: ReferenceKind = 'reference';
+
+  if (
+    parent !== undefined &&
+    Node.isPropertyAccessExpression(parent) &&
+    parent.getExpression() === ref
+  ) {
+    exportName = parent.getName();
+    kind = isCalleeOf(parent) ? 'call' : 'member-access';
+  } else if (
+    parent !== undefined &&
+    Node.isElementAccessExpression(parent) &&
+    parent.getExpression() === ref
+  ) {
+    const arg = parent.getArgumentExpression();
+    exportName = arg !== undefined && Node.isStringLiteral(arg) ? arg.getLiteralValue() : null;
+    kind = isCalleeOf(parent) ? 'call' : 'member-access';
+  }
+
+  return {
+    exportName,
+    kind,
+    file: ref.getSourceFile().getFilePath(),
+    line: ref.getStartLineNumber(),
+    column: ref.getStart() - ref.getStartLinePos(),
+    code: (parent ?? ref).getText(),
+  };
+}
+
+/** Classifies a reference node: a callee position is a `call`, anything else a `reference`. */
+function referenceKindOf(ref: Node): ReferenceKind {
+  return isCalleeOf(ref) ? 'call' : 'reference';
+}
+
+/** True when `node` sits in the callee position of a call expression (`node(...)`). */
+function isCalleeOf(node: Node): boolean {
+  const parent = node.getParent();
+  return parent !== undefined && Node.isCallExpression(parent) && parent.getExpression() === node;
+}
+
+/** Builds an `ExportUsage` for a resolved reference node. */
+function exportUsageOf(ref: Node, exportName: string | null): ExportUsage {
+  return {
+    exportName,
+    kind: referenceKindOf(ref),
+    file: ref.getSourceFile().getFilePath(),
+    line: ref.getStartLineNumber(),
+    column: ref.getStart() - ref.getStartLinePos(),
+    code: (ref.getParent() ?? ref).getText(),
+  };
+}
+
+/** Builds an `import`-kind `ExportUsage` for an export that is imported but unused. */
+function importUsage(node: Node, exportName: string | null): ExportUsage {
+  return {
+    exportName,
+    kind: 'import',
+    file: node.getSourceFile().getFilePath(),
+    line: node.getStartLineNumber(),
+    column: node.getStart() - node.getStartLinePos(),
+    code: node.getText(),
+  };
 }
 
 function collectReExports(
@@ -69,9 +221,40 @@ function collectReExports(
     if (isTypeOnlyExport(decl)) continue;
     const pkg = packageNameOf(moduleName);
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, decl, pkg));
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, resolveReExportUsages(decl)));
     }
   }
+}
+
+/**
+ * Resolves a re-export (`export ... from 'pkg'`) to its export-level usages.
+ * A named re-export records each forwarded export by name; a wildcard
+ * re-export (`export * from 'pkg'`) cannot be resolved and yields a single
+ * null-named usage. References past the re-export are not followed.
+ */
+function resolveReExportUsages(decl: ExportDeclaration): ExportUsage[] {
+  const named = decl.getNamedExports();
+  if (named.length === 0) {
+    return [reExportUsage(decl, null)];
+  }
+  const usages: ExportUsage[] = [];
+  for (const specifier of named) {
+    if (specifier.isTypeOnly()) continue;
+    usages.push(reExportUsage(decl, specifier.getName()));
+  }
+  return usages;
+}
+
+/** Builds a `re-export`-kind `ExportUsage` at a re-export declaration. */
+function reExportUsage(decl: ExportDeclaration, exportName: string | null): ExportUsage {
+  return {
+    exportName,
+    kind: 're-export',
+    file: decl.getSourceFile().getFilePath(),
+    line: decl.getStartLineNumber(),
+    column: decl.getStart() - decl.getStartLinePos(),
+    code: decl.getText(),
+  };
 }
 
 function collectDynamicImports(
@@ -84,7 +267,9 @@ function collectDynamicImports(
     if (moduleName === undefined) continue;
     const pkg = packageNameOf(moduleName);
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, call, pkg));
+      // The members reached through a dynamic import / require result are not
+      // resolved — see m2-design 3.5 — so the export name is left unknown.
+      result.get(pkg)?.push(toCodeUsage(file, call, pkg, [importUsage(call, null)]));
     }
   }
 }
@@ -160,12 +345,18 @@ function packageNameOf(specifier: string): string | undefined {
   return first;
 }
 
-function toCodeUsage(file: SourceFile, node: Node, symbol: string): CodeUsage {
+function toCodeUsage(
+  file: SourceFile,
+  node: Node,
+  symbol: string,
+  exportUsages: readonly ExportUsage[],
+): CodeUsage {
   return {
     file: file.getFilePath(),
     line: node.getStartLineNumber(),
     column: node.getStart() - node.getStartLinePos(),
     code: node.getText(),
     symbol,
+    exportUsages,
   };
 }

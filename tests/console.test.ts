@@ -21,8 +21,33 @@ const SUMMARY: ScanSummary = {
           file: '/p/src/used.ts',
           line: 1,
           column: 0,
-          code: "import 'lodash'",
+          code: "import { merge } from 'lodash'",
           symbol: 'lodash',
+          exportUsages: [
+            {
+              exportName: 'merge',
+              kind: 'call',
+              file: '/p/src/used.ts',
+              line: 12,
+              column: 0,
+              code: 'merge(a, b)',
+            },
+          ],
+        },
+      ],
+      usedExports: [
+        {
+          name: 'merge',
+          refs: [
+            {
+              exportName: 'merge',
+              kind: 'call',
+              file: '/p/src/used.ts',
+              line: 12,
+              column: 0,
+              code: 'merge(a, b)',
+            },
+          ],
         },
       ],
     },
@@ -31,18 +56,76 @@ const SUMMARY: ScanSummary = {
       vulnerabilities: [{ id: 'GHSA-2', summary: 'Prototype Pollution' }],
       impact: 'transitive',
       usages: [],
+      usedExports: [],
     },
   ],
 };
 
 describe('formatConsole', () => {
-  it('renders impact, usage location and severity label', () => {
+  it('renders impact, used exports and severity label', () => {
     const out = formatConsole(SUMMARY);
     expect(out).toContain('[needs-review] lodash@4.17.20');
-    expect(out).toContain('imported at /p/src/used.ts:1');
+    expect(out).toContain('uses: merge (/p/src/used.ts:12)');
     expect(out).toContain('[high] GHSA-1');
     expect(out).toContain('[transitive] minimist@0.0.8');
     expect(out).toContain('transitive dependency — import analysis skipped');
+  });
+
+  it('falls back to import sites when no export could be resolved', () => {
+    const out = formatConsole({
+      totalPackages: 1,
+      directCount: 1,
+      vulnerablePackages: [
+        {
+          pkg: { name: 'lodash', version: '4.17.20', isDirect: true },
+          vulnerabilities: [{ id: 'GHSA-1', summary: 'ReDoS' }],
+          impact: 'needs-review',
+          usages: [
+            {
+              file: '/p/src/boot.ts',
+              line: 3,
+              column: 0,
+              code: "import 'lodash'",
+              symbol: 'lodash',
+              exportUsages: [],
+            },
+          ],
+          usedExports: [],
+        },
+      ],
+    });
+    expect(out).toContain('imported at /p/src/boot.ts:3');
+  });
+
+  it('renders an unresolved export as "*"', () => {
+    const out = formatConsole({
+      totalPackages: 1,
+      directCount: 1,
+      vulnerablePackages: [
+        {
+          pkg: { name: 'lodash', version: '4.17.20', isDirect: true },
+          vulnerabilities: [{ id: 'GHSA-1', summary: 'ReDoS' }],
+          impact: 'needs-review',
+          usages: [],
+          usedExports: [
+            {
+              name: null,
+              refs: [
+                {
+                  exportName: null,
+                  kind: 'import',
+                  file: '/p/src/dyn.ts',
+                  line: 5,
+                  column: 0,
+                  code: "import('lodash')",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(out).toContain('uses: * (/p/src/dyn.ts:5)');
   });
 
   it('renders dependency chains for a transitive package when known', () => {
@@ -55,6 +138,7 @@ describe('formatConsole', () => {
           vulnerabilities: [{ id: 'GHSA-2', summary: 'Prototype Pollution' }],
           impact: 'transitive',
           usages: [],
+          usedExports: [],
           dependencyPaths: [['mkdirp@0.5.1', 'minimist@0.0.8']],
         },
       ],

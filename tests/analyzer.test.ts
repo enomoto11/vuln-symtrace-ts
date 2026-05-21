@@ -211,3 +211,167 @@ describe('analyzeImports — subpath imports', () => {
     );
   });
 });
+
+describe('analyzeImports — export-level usage (named imports)', () => {
+  it('records a called named import as a call usage', () => {
+    withProject(
+      { 'app.ts': `import { merge } from 'lodash';\nexport const x = merge({}, {});` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toHaveLength(1);
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'merge', kind: 'call' });
+      },
+    );
+  });
+
+  it('resolves an aliased named import to its exported name', () => {
+    withProject(
+      { 'app.ts': `import { merge as m } from 'lodash';\nexport const x = m({}, {});` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'merge', kind: 'call' });
+      },
+    );
+  });
+
+  it('marks an imported-but-unused export with kind "import"', () => {
+    withProject(
+      { 'app.ts': `import { merge } from 'lodash';\nexport const x = 1;` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: 'merge', kind: 'import' }),
+        ]);
+      },
+    );
+  });
+
+  it('records a named import passed as a value as a reference usage', () => {
+    withProject(
+      { 'app.ts': `import { merge } from 'lodash';\nexport const ref = merge;` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'merge', kind: 'reference' });
+      },
+    );
+  });
+
+  it('extracts only the value export when types are mixed in', () => {
+    withProject(
+      {
+        'app.ts': `import { type Dictionary, merge } from 'lodash';\nexport const x = merge({}, {});\nexport type X = Dictionary<number>;`,
+      },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages.map((u) => u.exportName)).toEqual(['merge']);
+      },
+    );
+  });
+
+  it('records each reference site of a multiply-used export', () => {
+    withProject(
+      {
+        'app.ts': `import { merge } from 'lodash';\nexport const a = merge({}, {});\nexport const b = merge({}, {});`,
+      },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toHaveLength(2);
+      },
+    );
+  });
+});
+
+describe('analyzeImports — export-level usage (default / namespace imports)', () => {
+  it('resolves a default-import member call to the accessed export', () => {
+    withProject(
+      { 'app.ts': `import _ from 'lodash';\nexport const x = _.merge({}, {});` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'merge', kind: 'call' });
+      },
+    );
+  });
+
+  it('resolves a namespace-import member call to the accessed export', () => {
+    withProject(
+      { 'app.ts': `import * as _ from 'lodash';\nexport const x = _.get({}, 'p');` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: 'get', kind: 'call' });
+      },
+    );
+  });
+
+  it('records an uncalled member access as a member-access usage', () => {
+    withProject(
+      { 'app.ts': `import _ from 'lodash';\nexport const f = _.merge;` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({
+          exportName: 'merge',
+          kind: 'member-access',
+        });
+      },
+    );
+  });
+
+  it('yields a null export name when the binding is passed around whole', () => {
+    withProject(
+      { 'app.ts': `import _ from 'lodash';\nexport const arr = [_];` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages[0]).toMatchObject({ exportName: null, kind: 'reference' });
+      },
+    );
+  });
+
+  it('marks an unused default import with kind "import" and a null export', () => {
+    withProject(
+      { 'app.ts': `import _ from 'lodash';\nexport const x = 1;` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: null, kind: 'import' }),
+        ]);
+      },
+    );
+  });
+});
+
+describe('analyzeImports — export-level usage (re-exports / dynamic imports)', () => {
+  it('records a named re-export by its forwarded export name', () => {
+    withProject(
+      { 'app.ts': `export { merge } from 'lodash';` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: 'merge', kind: 're-export' }),
+        ]);
+      },
+    );
+  });
+
+  it('records a wildcard re-export with a null export name', () => {
+    withProject(
+      { 'app.ts': `export * from 'lodash';` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: null, kind: 're-export' }),
+        ]);
+      },
+    );
+  });
+
+  it('records a dynamic import with a null export name', () => {
+    withProject(
+      { 'app.ts': `export async function load() {\n  return import('lodash');\n}` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: null, kind: 'import' }),
+        ]);
+      },
+    );
+  });
+});

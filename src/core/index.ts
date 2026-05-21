@@ -26,5 +26,8 @@ export type {
   InstalledPackage,
   CodeUsage,
   ImpactLevel,
+  ExportUsage,
+  ReferenceKind,
+  UsedExport,
 } from './types.js';
 export { queryByPackage, queryBatch } from '../adapters/osv.js';

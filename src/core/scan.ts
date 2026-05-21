@@ -2,13 +2,25 @@ import { parseLockfileWithGraph } from './lockfile.js';
 import { analyzeImports } from './analyzer.js';
 import { findDependencyPaths, type DependencyPath } from './dependency-graph.js';
 import { queryBatch } from '../adapters/osv.js';
-import type { InstalledPackage, OsvVulnerability, ImpactLevel, CodeUsage } from './types.js';
+import type {
+  InstalledPackage,
+  OsvVulnerability,
+  ImpactLevel,
+  CodeUsage,
+  ExportUsage,
+  UsedExport,
+} from './types.js';
 
 export interface VulnerablePackage {
   readonly pkg: InstalledPackage;
   readonly vulnerabilities: readonly OsvVulnerability[];
   readonly impact: ImpactLevel;
   readonly usages: readonly CodeUsage[];
+  /**
+   * Exports of this package used by the project's code, aggregated across all
+   * import sites. Empty for `not-affected` and `transitive` packages.
+   */
+  readonly usedExports: readonly UsedExport[];
   /**
    * For a `transitive` package, the dependency chains that pull it in — one
    * per direct dependency responsible. Absent for direct dependencies, and
@@ -78,11 +90,24 @@ export async function scanProject(options: ScanOptions): Promise<ScanSummary> {
           directKeys,
           `${pkg.name}@${pkg.version}`,
         );
-        return { pkg, vulnerabilities: vulns, impact: 'transitive', usages: [], dependencyPaths };
+        return {
+          pkg,
+          vulnerabilities: vulns,
+          impact: 'transitive',
+          usages: [],
+          usedExports: [],
+          dependencyPaths,
+        };
       }
       const usages = usagesByName.get(pkg.name) ?? [];
       const impact: ImpactLevel = usages.length > 0 ? 'needs-review' : 'not-affected';
-      return { pkg, vulnerabilities: vulns, impact, usages };
+      return {
+        pkg,
+        vulnerabilities: vulns,
+        impact,
+        usages,
+        usedExports: aggregateExports(usages),
+      };
     },
   );
 
@@ -91,4 +116,25 @@ export async function scanProject(options: ScanOptions): Promise<ScanSummary> {
     directCount: packages.filter((pkg) => pkg.isDirect).length,
     vulnerablePackages,
   };
+}
+
+/**
+ * Aggregates the per-site export usages of a package into one entry per
+ * exported symbol, so a single export referenced from several import sites
+ * collapses to one `UsedExport`. The unresolved bucket (`name: null`) groups
+ * usages whose export name could not be determined.
+ */
+function aggregateExports(usages: readonly CodeUsage[]): UsedExport[] {
+  const byName = new Map<string | null, ExportUsage[]>();
+  for (const usage of usages) {
+    for (const ref of usage.exportUsages) {
+      let group = byName.get(ref.exportName);
+      if (group === undefined) {
+        group = [];
+        byName.set(ref.exportName, group);
+      }
+      group.push(ref);
+    }
+  }
+  return Array.from(byName, ([name, refs]) => ({ name, refs }));
 }

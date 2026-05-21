@@ -41,9 +41,7 @@ function formatPackage(vp: VulnerablePackage, ignored: ReadonlyMap<string, strin
   } else if (vp.impact === 'not-affected') {
     lines.push('    ↳ direct dependency, but not imported in code');
   } else {
-    for (const usage of vp.usages) {
-      lines.push(`    ↳ imported at ${usage.file}:${usage.line.toString()}`);
-    }
+    lines.push(...formatUsedExports(vp));
   }
 
   for (const vuln of vp.vulnerabilities) {
@@ -52,6 +50,37 @@ function formatPackage(vp: VulnerablePackage, ignored: ReadonlyMap<string, strin
     lines.push(
       `      [${getSeverity(vuln)}] ${vuln.id} — ${vuln.summary ?? '(no summary)'}${suffix}`,
     );
+  }
+  return lines;
+}
+
+// At most this many exports are listed for a needs-review package.
+const MAX_EXPORTS_SHOWN = 8;
+
+/**
+ * Describes which exports of a needs-review package the project's code uses.
+ * Falls back to listing import sites when no export could be resolved — e.g. a
+ * side-effect-only import.
+ */
+function formatUsedExports(vp: VulnerablePackage): string[] {
+  if (vp.usedExports.length === 0) {
+    return vp.usages.map((usage) => `    ↳ imported at ${usage.file}:${usage.line.toString()}`);
+  }
+
+  const parts = vp.usedExports.slice(0, MAX_EXPORTS_SHOWN).map((used) => {
+    const name = used.name ?? '*';
+    const first = used.refs[0];
+    if (first === undefined) {
+      return name;
+    }
+    const more = used.refs.length > 1 ? `, +${(used.refs.length - 1).toString()} more` : '';
+    return `${name} (${first.file}:${first.line.toString()}${more})`;
+  });
+
+  const lines = [`    ↳ uses: ${parts.join(', ')}`];
+  if (vp.usedExports.length > MAX_EXPORTS_SHOWN) {
+    const hidden = vp.usedExports.length - MAX_EXPORTS_SHOWN;
+    lines.push(`        (+${hidden.toString()} more exports)`);
   }
   return lines;
 }
