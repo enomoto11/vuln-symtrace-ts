@@ -30,4 +30,5 @@ export type {
   ReferenceKind,
   UsedExport,
 } from './types.js';
+export { extractAdvisoryApis } from './advisory-api.js';
 export { queryByPackage, queryBatch } from '../adapters/osv.js';
