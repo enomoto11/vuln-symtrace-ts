@@ -24,13 +24,16 @@ program
       console.log(`\n🔍 Scanning "${opts.path}"...\n`);
     }
 
-    const { output, exitCode } = await runScan({
+    const { output, exitCode, warnings } = await runScan({
       path: opts.path,
       tsconfig: opts.tsconfig,
       severity: opts.severity,
       json,
     });
 
+    for (const warning of warnings) {
+      console.warn(`⚠️  ${warning}`);
+    }
     console.log(output);
     process.exitCode = exitCode;
   });

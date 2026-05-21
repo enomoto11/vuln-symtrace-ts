@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { findLockfile } from '../core/lockfile.js';
 import { scanProject } from '../core/scan.js';
 import { getSeverity, meetsThreshold } from '../core/severity.js';
+import { loadConfig, applyIgnoreRules } from '../core/config.js';
 import { formatConsole, formatJson } from '../reporters/console.js';
 import type { ScanSummary } from '../core/scan.js';
 import type { SeverityLevel } from '../core/types.js';
@@ -22,24 +23,36 @@ export interface ScanCommandResult {
   readonly output: string;
   /** Process exit code: 1 when the scan should fail CI, otherwise 0. */
   readonly exitCode: number;
+  /** Non-fatal warnings (e.g. expired ignore rules), for printing to stderr. */
+  readonly warnings: readonly string[];
 }
 
 /**
- * Runs the `scan` command end to end: locates the lockfile, scans the project,
- * formats the report, and decides the CI exit code. Pure with respect to the
- * process — it returns the output and exit code rather than writing them, so
- * it can be exercised directly in tests.
+ * Runs the `scan` command end to end: locates the lockfile, loads the project
+ * config, scans the project, applies ignore rules, formats the report, and
+ * decides the CI exit code. Pure with respect to the process — it returns the
+ * output and exit code rather than writing them, so it can be exercised
+ * directly in tests.
  */
 export async function runScan(options: RunScanOptions): Promise<ScanCommandResult> {
   const lockfilePath = findLockfile(options.path);
   const tsConfigFilePath = resolve(options.path, options.tsconfig);
   const threshold = parseSeverity(options.severity);
+  const config = loadConfig(options.path);
 
   const summary = await scanProject({ lockfilePath, tsConfigFilePath });
+  const { ignored, expired } = applyIgnoreRules(summary, config.ignore ?? [], new Date());
+
+  const warnings = expired.map(
+    (rule) =>
+      `ignore rule for "${rule.id}" expired on ${rule.expires ?? '(unknown)'} — ` +
+      `it no longer suppresses this vulnerability`,
+  );
 
   return {
-    output: options.json ? formatJson(summary) : formatConsole(summary),
-    exitCode: hasCiFailure(summary, threshold) ? 1 : 0,
+    output: options.json ? formatJson(summary, ignored) : formatConsole(summary, ignored),
+    exitCode: hasCiFailure(summary, threshold, ignored) ? 1 : 0,
+    warnings,
   };
 }
 
@@ -51,11 +64,20 @@ export function parseSeverity(value: string): SeverityLevel {
   throw new Error(`Invalid --severity "${value}". Use one of: low, moderate, high, critical.`);
 }
 
-/** A non-zero exit is warranted when a needs-review package carries a vuln at or above the threshold. */
-function hasCiFailure(summary: ScanSummary, threshold: SeverityLevel): boolean {
+/**
+ * A non-zero exit is warranted when a needs-review package carries a vuln at or
+ * above the threshold. Vulnerabilities suppressed by an ignore rule are skipped.
+ */
+function hasCiFailure(
+  summary: ScanSummary,
+  threshold: SeverityLevel,
+  ignored: ReadonlyMap<string, string>,
+): boolean {
   return summary.vulnerablePackages.some(
     (vp) =>
       vp.impact === 'needs-review' &&
-      vp.vulnerabilities.some((v) => meetsThreshold(getSeverity(v), threshold)),
+      vp.vulnerabilities.some(
+        (v) => !ignored.has(v.id) && meetsThreshold(getSeverity(v), threshold),
+      ),
   );
 }

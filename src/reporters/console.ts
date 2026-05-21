@@ -1,8 +1,16 @@
 import type { ScanSummary, VulnerablePackage } from '../core/scan.js';
 import { getSeverity } from '../core/severity.js';
 
-/** Formats a scan result as human-readable console output. */
-export function formatConsole(summary: ScanSummary): string {
+/**
+ * Formats a scan result as human-readable console output.
+ *
+ * `ignored` maps a vulnerability id to the reason it was suppressed by an
+ * ignore rule; such vulnerabilities are still listed, but annotated.
+ */
+export function formatConsole(
+  summary: ScanSummary,
+  ignored: ReadonlyMap<string, string> = new Map(),
+): string {
   const transitiveCount = summary.totalPackages - summary.directCount;
   const lines: string[] = [
     `📦 ${summary.totalPackages.toString()} dependencies ` +
@@ -16,12 +24,12 @@ export function formatConsole(summary: ScanSummary): string {
 
   lines.push('', `⚠️  ${summary.vulnerablePackages.length.toString()} vulnerable package(s):`, '');
   for (const vp of summary.vulnerablePackages) {
-    lines.push(...formatPackage(vp), '');
+    lines.push(...formatPackage(vp, ignored), '');
   }
   return lines.join('\n').trimEnd();
 }
 
-function formatPackage(vp: VulnerablePackage): string[] {
+function formatPackage(vp: VulnerablePackage, ignored: ReadonlyMap<string, string>): string[] {
   const count = vp.vulnerabilities.length;
   const lines: string[] = [
     `  [${vp.impact}] ${vp.pkg.name}@${vp.pkg.version} — ` +
@@ -39,7 +47,11 @@ function formatPackage(vp: VulnerablePackage): string[] {
   }
 
   for (const vuln of vp.vulnerabilities) {
-    lines.push(`      [${getSeverity(vuln)}] ${vuln.id} — ${vuln.summary ?? '(no summary)'}`);
+    const reason = ignored.get(vuln.id);
+    const suffix = reason !== undefined ? ` (ignored: ${reason})` : '';
+    lines.push(
+      `      [${getSeverity(vuln)}] ${vuln.id} — ${vuln.summary ?? '(no summary)'}${suffix}`,
+    );
   }
   return lines;
 }
@@ -68,7 +80,15 @@ function formatTransitive(vp: VulnerablePackage): string[] {
   return lines;
 }
 
-/** Formats a scan result as JSON for CI consumption. */
-export function formatJson(summary: ScanSummary): string {
-  return JSON.stringify(summary, null, 2);
+/**
+ * Formats a scan result as JSON for CI consumption. Suppressed vulnerabilities
+ * are listed under `ignored` as `{ id, reason }` so consumers can see what was
+ * excluded from the exit code.
+ */
+export function formatJson(
+  summary: ScanSummary,
+  ignored: ReadonlyMap<string, string> = new Map(),
+): string {
+  const ignoredList = Array.from(ignored, ([id, reason]) => ({ id, reason }));
+  return JSON.stringify({ ...summary, ignored: ignoredList }, null, 2);
 }
