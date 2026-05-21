@@ -78,7 +78,7 @@ describe('runScan', () => {
       const result = await runScan({ path: dir, tsconfig: 'tsconfig.json', severity: 'moderate', json: false });
 
       expect(result.output).toContain('[needs-review] vuln-pkg@1.0.0');
-      expect(result.output).toContain('imported at');
+      expect(result.output).toContain('uses:');
       // A HIGH vuln on a needs-review package fails the moderate threshold.
       expect(result.exitCode).toBe(1);
     });
