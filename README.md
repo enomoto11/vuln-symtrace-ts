@@ -124,7 +124,7 @@ symtrace does not replace `npm audit` or Dependabot — it adds a triage step. C
 
 ## Status
 
-Beta (0.2.x). Single-repo scanning only.
+Beta (0.1.x). Single-repo scanning only.
 
 ## License
 
