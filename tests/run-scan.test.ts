@@ -106,6 +106,46 @@ describe('runScan', () => {
     });
   });
 
+  it('suppresses a vulnerability listed in .symtracerc.json', async () => {
+    stubOsv();
+    await withProject(async (dir) => {
+      writeFileSync(
+        resolve(dir, '.symtracerc.json'),
+        JSON.stringify({ ignore: [{ id: 'GHSA-x', reason: 'accepted risk' }] }),
+      );
+      const result = await runScan({
+        path: dir,
+        tsconfig: 'tsconfig.json',
+        severity: 'moderate',
+        json: false,
+      });
+
+      expect(result.output).toContain('(ignored: accepted risk)');
+      // The only vulnerability is suppressed, so CI passes.
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  it('warns about an expired ignore rule and still fails CI', async () => {
+    stubOsv();
+    await withProject(async (dir) => {
+      writeFileSync(
+        resolve(dir, '.symtracerc.json'),
+        JSON.stringify({ ignore: [{ id: 'GHSA-x', reason: 'stale', expires: '2000-01-01' }] }),
+      );
+      const result = await runScan({
+        path: dir,
+        tsconfig: 'tsconfig.json',
+        severity: 'moderate',
+        json: false,
+      });
+
+      expect(result.warnings.some((w) => w.includes('GHSA-x'))).toBe(true);
+      // The rule expired, so the vulnerability is no longer suppressed.
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
   it('throws a clear error when no lockfile is present', async () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'vuln-symtrace-ts-empty-'));
     try {

@@ -1,8 +1,8 @@
 # vuln-symtrace-ts
 
-Triage layer for `npm audit` and Dependabot — tells you which vulnerability alerts actually matter by checking whether your code imports the affected package.
+An OSV-based vulnerability scanner that adds a triage step: it tells you which vulnerable dependencies your code actually imports, so you can focus on the alerts that represent real exposure.
 
-> npm package: `vuln-symtrace-ts` · CLI: `symtrace`
+> Status: in development, not yet published to npm · CLI: `symtrace`
 
 ## Problem
 
@@ -10,7 +10,7 @@ Triage layer for `npm audit` and Dependabot — tells you which vulnerability al
 
 ## What symtrace does
 
-symtrace sits on top of your existing vulnerability tooling. It takes the list of known-vulnerable packages and cross-references it against your actual source code using TypeScript AST analysis (ts-morph), then classifies each one:
+symtrace scans your dependency tree, queries the OSV database for known vulnerabilities itself, and then cross-references each vulnerable package against your actual source code using TypeScript AST analysis (ts-morph) to classify it:
 
 | Level          | Meaning                                                         |
 | -------------- | --------------------------------------------------------------- |
@@ -46,6 +46,28 @@ Options:
 
 Exits with code `1` when a `needs-review` package has a vulnerability at or above the severity threshold, making it usable as a CI gate.
 
+### Suppressing alerts
+
+To stop a specific vulnerability from failing the CI gate — for example one you have reviewed and accepted — add a `.symtracerc.json` file to the scanned project directory:
+
+```json
+{
+  "ignore": [
+    {
+      "id": "GHSA-jf85-cpcp-j695",
+      "reason": "not reachable — only the unaffected API is used",
+      "expires": "2026-12-31"
+    }
+  ]
+}
+```
+
+- `id` — the OSV id, GHSA id, or a CVE alias of the vulnerability to suppress.
+- `reason` — required, so every suppression stays documented.
+- `expires` — optional ISO date (`YYYY-MM-DD`). After it passes, the rule stops suppressing and symtrace prints a warning, forcing periodic re-review.
+
+Suppressed vulnerabilities are still listed in the report (annotated with their reason); they are only excluded from the exit code.
+
 ### Check a single package
 
 ```
@@ -78,7 +100,7 @@ symtrace does not replace `npm audit` or Dependabot — it adds a triage step. C
 
 ## Status
 
-Early development. Single-repo scanning only.
+Early development, not yet published to npm. Single-repo scanning only.
 
 ## License
 
