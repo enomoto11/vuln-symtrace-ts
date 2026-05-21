@@ -29,6 +29,8 @@ export type {
   ExportUsage,
   ReferenceKind,
   UsedExport,
+  SoftHint,
+  AdvisoryEvidence,
 } from './types.js';
 export { extractAdvisoryApis } from './advisory-api.js';
 export { queryByPackage, queryBatch } from '../adapters/osv.js';

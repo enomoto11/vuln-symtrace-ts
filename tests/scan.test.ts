@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { scanProject } from '../src/core/scan.js';
+import { scanProject, evaluateAdvisoryEvidence } from '../src/core/scan.js';
+import type { UsedExport } from '../src/core/types.js';
 import { resolve } from 'node:path';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -172,5 +173,61 @@ describe('scanProject', () => {
       expect(summary.totalPackages).toBe(3);
       expect(summary.directCount).toBe(2);
     });
+  });
+});
+
+describe('evaluateAdvisoryEvidence', () => {
+  /** Builds used-export entries with the given names (no reference sites needed). */
+  function used(...names: (string | null)[]): UsedExport[] {
+    return names.map((name) => ({ name, refs: [] }));
+  }
+
+  it('flags review-priority when a used export is named by the advisory', () => {
+    const [evidence] = evaluateAdvisoryEvidence(
+      [{ id: 'V1', details: 'The function `merge` is vulnerable.' }],
+      used('merge', 'get'),
+    );
+    expect(evidence?.hint).toBe('review-priority');
+    expect(evidence?.overlap).toEqual(['merge']);
+  });
+
+  it('flags likely-low when the advisory names APIs the code does not use', () => {
+    const [evidence] = evaluateAdvisoryEvidence(
+      [{ id: 'V1', details: 'The function `template` is vulnerable.' }],
+      used('merge', 'get'),
+    );
+    expect(evidence?.hint).toBe('likely-low');
+  });
+
+  it('stays needs-review when the advisory names no API', () => {
+    const [evidence] = evaluateAdvisoryEvidence(
+      [{ id: 'V1', details: 'Vulnerable due to improper input handling.' }],
+      used('merge'),
+    );
+    expect(evidence?.hint).toBe('needs-review');
+  });
+
+  it('downgrades likely-low to needs-review when an export is unresolved', () => {
+    const [evidence] = evaluateAdvisoryEvidence(
+      [{ id: 'V1', details: 'The function `template` is vulnerable.' }],
+      used('merge', null),
+    );
+    expect(evidence?.hint).toBe('needs-review');
+  });
+
+  it('keeps review-priority even when an export is unresolved', () => {
+    const [evidence] = evaluateAdvisoryEvidence(
+      [{ id: 'V1', details: 'The function `merge` is vulnerable.' }],
+      used('merge', null),
+    );
+    expect(evidence?.hint).toBe('review-priority');
+  });
+
+  it('matches export names case-insensitively', () => {
+    const [evidence] = evaluateAdvisoryEvidence(
+      [{ id: 'V1', details: 'The function `defaultsDeep` is vulnerable.' }],
+      used('defaultsdeep'),
+    );
+    expect(evidence?.hint).toBe('review-priority');
   });
 });

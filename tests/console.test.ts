@@ -50,6 +50,7 @@ const SUMMARY: ScanSummary = {
           ],
         },
       ],
+      advisoryEvidence: [],
     },
     {
       pkg: { name: 'minimist', version: '0.0.8', isDirect: false },
@@ -57,6 +58,7 @@ const SUMMARY: ScanSummary = {
       impact: 'transitive',
       usages: [],
       usedExports: [],
+      advisoryEvidence: [],
     },
   ],
 };
@@ -91,6 +93,7 @@ describe('formatConsole', () => {
             },
           ],
           usedExports: [],
+          advisoryEvidence: [],
         },
       ],
     });
@@ -122,6 +125,7 @@ describe('formatConsole', () => {
               ],
             },
           ],
+          advisoryEvidence: [],
         },
       ],
     });
@@ -139,6 +143,7 @@ describe('formatConsole', () => {
           impact: 'transitive',
           usages: [],
           usedExports: [],
+          advisoryEvidence: [],
           dependencyPaths: [['mkdirp@0.5.1', 'minimist@0.0.8']],
         },
       ],
