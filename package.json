@@ -1,6 +1,6 @@
 {
   "name": "vuln-symtrace-ts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Detect whether your code is actually affected by known vulnerabilities, not just your dependency tree.",
   "type": "module",
   "engines": {
