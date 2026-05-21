@@ -58,14 +58,52 @@ describe('getSeverity (CVSS v3 fallback)', () => {
     expect(getSeverity(vuln)).toBe('low');
   });
 
-  it('returns unknown for a CVSS v4 vector (v4 not supported)', () => {
-    expect(
-      getSeverity(cvssVuln('CVSS_V4', 'CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N')),
-    ).toBe('unknown');
-  });
-
   it('returns unknown for a malformed vector', () => {
     expect(getSeverity(cvssVuln('CVSS_V3', 'not-a-vector'))).toBe('unknown');
+  });
+});
+
+describe('getSeverity (CVSS v4 fallback)', () => {
+  it('computes critical from a CVSS v4 vector', () => {
+    expect(
+      getSeverity(
+        cvssVuln('CVSS_V4', 'CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N'),
+      ),
+    ).toBe('critical');
+  });
+
+  it('computes high from a CVSS v4 vector', () => {
+    expect(
+      getSeverity(
+        cvssVuln('CVSS_V4', 'CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N'),
+      ),
+    ).toBe('high');
+  });
+
+  it('computes low from a CVSS v4 vector', () => {
+    expect(
+      getSeverity(
+        cvssVuln('CVSS_V4', 'CVSS:4.0/AV:P/AC:H/AT:P/PR:H/UI:A/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N'),
+      ),
+    ).toBe('low');
+  });
+
+  it('returns unknown for an incomplete CVSS v4 vector', () => {
+    expect(getSeverity(cvssVuln('CVSS_V4', 'CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N'))).toBe('unknown');
+  });
+
+  it('prefers the GHSA label over a CVSS v4 vector', () => {
+    const vuln: OsvVulnerability = {
+      id: 'X',
+      database_specific: { severity: 'LOW' },
+      severity: [
+        {
+          type: 'CVSS_V4',
+          score: 'CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N',
+        },
+      ],
+    };
+    expect(getSeverity(vuln)).toBe('low');
   });
 });
 
