@@ -221,9 +221,40 @@ function collectReExports(
     if (isTypeOnlyExport(decl)) continue;
     const pkg = packageNameOf(moduleName);
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, []));
+      result.get(pkg)?.push(toCodeUsage(file, decl, pkg, resolveReExportUsages(decl)));
     }
   }
+}
+
+/**
+ * Resolves a re-export (`export ... from 'pkg'`) to its export-level usages.
+ * A named re-export records each forwarded export by name; a wildcard
+ * re-export (`export * from 'pkg'`) cannot be resolved and yields a single
+ * null-named usage. References past the re-export are not followed.
+ */
+function resolveReExportUsages(decl: ExportDeclaration): ExportUsage[] {
+  const named = decl.getNamedExports();
+  if (named.length === 0) {
+    return [reExportUsage(decl, null)];
+  }
+  const usages: ExportUsage[] = [];
+  for (const specifier of named) {
+    if (specifier.isTypeOnly()) continue;
+    usages.push(reExportUsage(decl, specifier.getName()));
+  }
+  return usages;
+}
+
+/** Builds a `re-export`-kind `ExportUsage` at a re-export declaration. */
+function reExportUsage(decl: ExportDeclaration, exportName: string | null): ExportUsage {
+  return {
+    exportName,
+    kind: 're-export',
+    file: decl.getSourceFile().getFilePath(),
+    line: decl.getStartLineNumber(),
+    column: decl.getStart() - decl.getStartLinePos(),
+    code: decl.getText(),
+  };
 }
 
 function collectDynamicImports(
@@ -236,7 +267,9 @@ function collectDynamicImports(
     if (moduleName === undefined) continue;
     const pkg = packageNameOf(moduleName);
     if (pkg !== undefined && targets.has(pkg)) {
-      result.get(pkg)?.push(toCodeUsage(file, call, pkg, []));
+      // The members reached through a dynamic import / require result are not
+      // resolved — see m2-design 3.5 — so the export name is left unknown.
+      result.get(pkg)?.push(toCodeUsage(file, call, pkg, [importUsage(call, null)]));
     }
   }
 }

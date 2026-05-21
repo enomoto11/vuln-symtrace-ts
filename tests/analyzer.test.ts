@@ -337,3 +337,41 @@ describe('analyzeImports — export-level usage (default / namespace imports)', 
     );
   });
 });
+
+describe('analyzeImports — export-level usage (re-exports / dynamic imports)', () => {
+  it('records a named re-export by its forwarded export name', () => {
+    withProject(
+      { 'app.ts': `export { merge } from 'lodash';` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: 'merge', kind: 're-export' }),
+        ]);
+      },
+    );
+  });
+
+  it('records a wildcard re-export with a null export name', () => {
+    withProject(
+      { 'app.ts': `export * from 'lodash';` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: null, kind: 're-export' }),
+        ]);
+      },
+    );
+  });
+
+  it('records a dynamic import with a null export name', () => {
+    withProject(
+      { 'app.ts': `export async function load() {\n  return import('lodash');\n}` },
+      (tsConfigFilePath) => {
+        const usage = analyzeLodash(tsConfigFilePath).get('lodash')?.[0];
+        expect(usage?.exportUsages).toEqual([
+          expect.objectContaining({ exportName: null, kind: 'import' }),
+        ]);
+      },
+    );
+  });
+});
