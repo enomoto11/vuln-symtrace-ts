@@ -88,6 +88,30 @@ export interface UsedExport {
   readonly refs: readonly ExportUsage[];
 }
 
+/**
+ * Soft, non-authoritative triage hint for a needs-review vulnerability:
+ * - `review-priority` — the code uses an export the advisory names as vulnerable
+ * - `likely-low`      — the advisory names exports, but the code uses none of them
+ * - `needs-review`    — the advisory names no export, so there is nothing to compare
+ */
+export type SoftHint = 'review-priority' | 'likely-low' | 'needs-review';
+
+/**
+ * Cross-reference between the exports a project uses and the API names an
+ * advisory's text mentions, for one vulnerability. Never authoritative — it
+ * informs prioritisation, it does not decide whether the code is affected.
+ */
+export interface AdvisoryEvidence {
+  /** OSV / GHSA id this evidence belongs to. */
+  readonly vulnId: string;
+  /** Code identifiers extracted from the advisory text (may be empty). */
+  readonly mentionedApis: readonly string[];
+  /** Used export names that overlap with `mentionedApis` (case-insensitive). */
+  readonly overlap: readonly string[];
+  /** The triage hint derived from the overlap. */
+  readonly hint: SoftHint;
+}
+
 export type ImpactLevel = 'needs-review' | 'not-affected' | 'transitive';
 
 export type SeverityLevel = 'low' | 'moderate' | 'high' | 'critical';

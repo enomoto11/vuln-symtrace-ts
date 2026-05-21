@@ -50,6 +50,7 @@ const SUMMARY: ScanSummary = {
           ],
         },
       ],
+      advisoryEvidence: [],
     },
     {
       pkg: { name: 'minimist', version: '0.0.8', isDirect: false },
@@ -57,6 +58,7 @@ const SUMMARY: ScanSummary = {
       impact: 'transitive',
       usages: [],
       usedExports: [],
+      advisoryEvidence: [],
     },
   ],
 };
@@ -91,6 +93,7 @@ describe('formatConsole', () => {
             },
           ],
           usedExports: [],
+          advisoryEvidence: [],
         },
       ],
     });
@@ -122,6 +125,7 @@ describe('formatConsole', () => {
               ],
             },
           ],
+          advisoryEvidence: [],
         },
       ],
     });
@@ -139,6 +143,7 @@ describe('formatConsole', () => {
           impact: 'transitive',
           usages: [],
           usedExports: [],
+          advisoryEvidence: [],
           dependencyPaths: [['mkdirp@0.5.1', 'minimist@0.0.8']],
         },
       ],
@@ -154,6 +159,57 @@ describe('formatConsole', () => {
       vulnerablePackages: [],
     });
     expect(out).toContain('No known vulnerabilities found');
+  });
+});
+
+describe('formatConsole — advisory hints', () => {
+  /** A needs-review lodash package carrying the given advisory evidence. */
+  function summaryWithEvidence(evidence: ScanSummary['vulnerablePackages'][number]['advisoryEvidence']): ScanSummary {
+    return {
+      totalPackages: 1,
+      directCount: 1,
+      vulnerablePackages: [
+        {
+          pkg: { name: 'lodash', version: '4.17.20', isDirect: true },
+          vulnerabilities: [{ id: 'GHSA-1', summary: 'Prototype Pollution' }],
+          impact: 'needs-review',
+          usages: [],
+          usedExports: [{ name: 'merge', refs: [] }],
+          advisoryEvidence: evidence,
+        },
+      ],
+    };
+  }
+
+  it('shows a review-priority badge and the API comparison', () => {
+    const out = formatConsole(
+      summaryWithEvidence([
+        { vulnId: 'GHSA-1', mentionedApis: ['merge', 'set'], overlap: ['merge'], hint: 'review-priority' },
+      ]),
+    );
+    expect(out).toContain('[review priority]');
+    expect(out).toContain('advisory mentions: merge, set · you use: merge');
+  });
+
+  it('shows a likely-low badge and a no-overlap note', () => {
+    const out = formatConsole(
+      summaryWithEvidence([
+        { vulnId: 'GHSA-1', mentionedApis: ['template'], overlap: [], hint: 'likely-low' },
+      ]),
+    );
+    expect(out).toContain('[likely low]');
+    expect(out).toContain('advisory mentions: template · no overlap with your usage');
+  });
+
+  it('shows no badge when the advisory names no API', () => {
+    const out = formatConsole(
+      summaryWithEvidence([
+        { vulnId: 'GHSA-1', mentionedApis: [], overlap: [], hint: 'needs-review' },
+      ]),
+    );
+    expect(out).not.toContain('[review priority]');
+    expect(out).not.toContain('[likely low]');
+    expect(out).not.toContain('advisory mentions:');
   });
 });
 

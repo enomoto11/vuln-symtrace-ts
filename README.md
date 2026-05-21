@@ -1,8 +1,8 @@
 # vuln-symtrace-ts
 
-An OSV-based vulnerability scanner that adds a triage step: it tells you which vulnerable dependencies your code actually imports, so you can focus on the alerts that represent real exposure.
+An OSV-based vulnerability scanner that adds a triage step: it tells you which vulnerable dependencies your code actually uses — down to the individual exports — and cross-references them against what each advisory flags, so you can focus on the alerts that represent real exposure.
 
-> Status: in development, not yet published to npm · CLI: `symtrace`
+> npm: `vuln-symtrace-ts` · CLI: `symtrace`
 
 ## Problem
 
@@ -24,12 +24,26 @@ This lets you focus on the handful of alerts that represent real exposure instea
 
 1. Detect and parse the project's lockfile (`pnpm-lock.yaml`, `package-lock.json`, or `yarn.lock`)
 2. Query the OSV API for every dependency, direct and transitive
-3. For each vulnerable package, use ts-morph to check whether your code imports it
-4. Classify impact and report results
+3. For each vulnerable package, use ts-morph to resolve which of its exports your code uses, and where
+4. Cross-reference the used exports against the APIs each advisory names, classify impact, and report
 
 Import detection covers static imports, dynamic `import()`, `require()`, and re-exports (`export ... from`), including subpath imports such as `lodash/get` and scoped subpaths like `@scope/pkg/sub` — these are resolved back to their package. Type-only imports are ignored since they are erased at compile time.
 
 ## Usage
+
+### Install
+
+Run without installing:
+
+```
+npx vuln-symtrace-ts scan -p .
+```
+
+Or install the `symtrace` CLI globally:
+
+```
+npm install -g vuln-symtrace-ts
+```
 
 ### Scan a project
 
@@ -79,7 +93,17 @@ Queries the OSV API for a package without code analysis.
 
 ## Severity
 
-A vulnerability's severity is taken from the GitHub Advisory Database label when present, and otherwise computed from the CVSS v3 vector. CVSS v4 is not yet supported.
+A vulnerability's severity is taken from the GitHub Advisory Database label when present, and otherwise computed from the CVSS vector. Both CVSS v3 and v4 vectors are supported; the v4 score is an approximation, and the GitHub Advisory label always takes precedence over it.
+
+## Advisory cross-reference
+
+For each `needs-review` vulnerability, symtrace reads the advisory text for the API names it calls out and compares them against the exports your code uses:
+
+- **review priority** — your code uses an export the advisory names as vulnerable
+- **likely low** — the advisory names specific exports, and your code uses none of them
+- _(no hint)_ — the advisory names no specific API, so there is nothing to compare
+
+These hints guide where to look first; they are not verdicts. They never change the exit code — a `likely low` result still fails the CI gate when it meets the severity threshold. The advisory match is a conservative text heuristic (it reads back-quoted API names), so confirm results manually.
 
 ## Supported package managers
 
@@ -93,14 +117,14 @@ Node.js >= 20.
 
 symtrace does not replace `npm audit` or Dependabot — it adds a triage step. Current limitations:
 
-- Detects whether a vulnerable package is imported, not whether a specific vulnerable API is called. A `needs-review` result means "your code uses this package; verify manually." Deeper call-level analysis is planned.
+- Resolves which exports of a vulnerable package your code uses and cross-references them with the advisory text, but the advisory match is a conservative text heuristic and many advisories name no API at all. A hint is guidance, not a verdict — confirm `review priority` and `needs-review` results manually. Argument-level data-flow analysis is planned.
 - Transitive dependencies are flagged but not analyzed for code usage, since your code typically does not import them directly. The report shows the dependency chain that pulls each one in.
 - Workspaces / monorepos are not yet supported. symtrace analyzes a single package against one `tsconfig`, so in a pnpm/npm/yarn workspace with multiple packages the direct/transitive classification and import analysis can be inaccurate. Run symtrace once per package directory instead.
 - JavaScript-only (non-TypeScript) projects are supported via `allowJs`, but symbol resolution accuracy is lower without type information.
 
 ## Status
 
-Early development, not yet published to npm. Single-repo scanning only.
+Beta (0.1.x). Single-repo scanning only.
 
 ## License
 

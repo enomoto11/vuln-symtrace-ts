@@ -16,7 +16,7 @@ function rankOf(level: SeverityLevel): number {
 /**
  * Resolves the severity label of an OSV vulnerability.
  * Prefers the GitHub Advisory Database label (`database_specific.severity`);
- * falls back to computing it from a CVSS v3 base score. Returns 'unknown'
+ * falls back to computing it from a CVSS v3 or v4 base score. Returns 'unknown'
  * when neither source yields a recognizable level.
  */
 export function getSeverity(vuln: OsvVulnerability): SeverityLevel | 'unknown' {
@@ -26,8 +26,8 @@ export function getSeverity(vuln: OsvVulnerability): SeverityLevel | 'unknown' {
   }
 
   for (const entry of vuln.severity ?? []) {
-    if (entry.type !== 'CVSS_V3') continue;
-    const score = cvssV3BaseScore(entry.score);
+    const score =
+      entry.type === 'CVSS_V4' ? cvssV4BaseScore(entry.score) : cvssV3BaseScore(entry.score);
     if (score === undefined) continue;
     const level = scoreToLevel(score);
     if (level !== undefined) return level;
@@ -114,6 +114,71 @@ function cvssV3BaseScore(vector: string): number | undefined {
   const combined = scopeChanged ? 1.08 * (impact + exploitability) : impact + exploitability;
 
   return roundUp(Math.min(combined, 10));
+}
+
+// --- CVSS v4.0 base score (approximation) ---
+// CVSS v4.0's official score uses a 270-entry MacroVector lookup. This
+// approximation reuses the v3 exploitability/impact structure with v4 metrics,
+// which is accurate enough for the four qualitative bands. In getSeverity the
+// GitHub Advisory label always takes precedence over this.
+
+const ATTACK_REQUIREMENTS: Record<string, number> = { N: 0.85, P: 0.62 };
+// v4 User Interaction has three values (None / Passive / Active).
+const USER_INTERACTION_V4: Record<string, number> = { N: 0.85, P: 0.62, A: 0.62 };
+
+/**
+ * Computes an approximate CVSS v4.0 base score from a vector string, or
+ * undefined when the vector is not CVSS v4.0 or is missing a required metric.
+ */
+function cvssV4BaseScore(vector: string): number | undefined {
+  if (!vector.startsWith('CVSS:4.0/')) return undefined;
+
+  const metrics = new Map<string, string>();
+  for (const part of vector.split('/')) {
+    const [key, value] = part.split(':');
+    if (key !== undefined && value !== undefined) {
+      metrics.set(key, value);
+    }
+  }
+
+  const av = ATTACK_VECTOR[metrics.get('AV') ?? ''];
+  const ac = ATTACK_COMPLEXITY[metrics.get('AC') ?? ''];
+  const at = ATTACK_REQUIREMENTS[metrics.get('AT') ?? ''];
+  const pr = PRIVILEGES_UNCHANGED[metrics.get('PR') ?? ''];
+  const ui = USER_INTERACTION_V4[metrics.get('UI') ?? ''];
+  // Impact on the vulnerable system, then on subsequent systems.
+  const vc = IMPACT_METRIC[metrics.get('VC') ?? ''];
+  const vi = IMPACT_METRIC[metrics.get('VI') ?? ''];
+  const va = IMPACT_METRIC[metrics.get('VA') ?? ''];
+  const sc = IMPACT_METRIC[metrics.get('SC') ?? ''];
+  const si = IMPACT_METRIC[metrics.get('SI') ?? ''];
+  const sa = IMPACT_METRIC[metrics.get('SA') ?? ''];
+
+  if (
+    av === undefined ||
+    ac === undefined ||
+    at === undefined ||
+    pr === undefined ||
+    ui === undefined ||
+    vc === undefined ||
+    vi === undefined ||
+    va === undefined ||
+    sc === undefined ||
+    si === undefined ||
+    sa === undefined
+  ) {
+    return undefined;
+  }
+
+  const vulnImpact = 1 - (1 - vc) * (1 - vi) * (1 - va);
+  const subsequentImpact = 1 - (1 - sc) * (1 - si) * (1 - sa);
+  // Subsequent-system impact is discounted slightly relative to the directly
+  // vulnerable system.
+  const impact = 6.42 * Math.max(vulnImpact, subsequentImpact * 0.9);
+  if (impact <= 0) return 0;
+
+  const exploitability = 8.22 * av * ac * at * pr * ui;
+  return roundUp(Math.min(impact + exploitability, 10));
 }
 
 /** CVSS v3.1 "Roundup": rounds up to one decimal place per the spec's integer trick. */

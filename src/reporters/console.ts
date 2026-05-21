@@ -1,5 +1,6 @@
 import type { ScanSummary, VulnerablePackage } from '../core/scan.js';
 import { getSeverity } from '../core/severity.js';
+import type { SoftHint, AdvisoryEvidence } from '../core/types.js';
 
 /**
  * Formats a scan result as human-readable console output.
@@ -46,10 +47,17 @@ function formatPackage(vp: VulnerablePackage, ignored: ReadonlyMap<string, strin
 
   for (const vuln of vp.vulnerabilities) {
     const reason = ignored.get(vuln.id);
-    const suffix = reason !== undefined ? ` (ignored: ${reason})` : '';
+    const ignoredSuffix = reason !== undefined ? ` (ignored: ${reason})` : '';
+    const evidence = vp.advisoryEvidence.find((e) => e.vulnId === vuln.id);
+    const hintSuffix = evidence !== undefined ? hintLabelOf(evidence.hint) : '';
     lines.push(
-      `      [${getSeverity(vuln)}] ${vuln.id} — ${vuln.summary ?? '(no summary)'}${suffix}`,
+      `      [${getSeverity(vuln)}] ${vuln.id} — ` +
+        `${vuln.summary ?? '(no summary)'}${ignoredSuffix}${hintSuffix}`,
     );
+    const evidenceLine = evidence !== undefined ? formatEvidenceLine(evidence) : undefined;
+    if (evidenceLine !== undefined) {
+      lines.push(evidenceLine);
+    }
   }
   return lines;
 }
@@ -83,6 +91,41 @@ function formatUsedExports(vp: VulnerablePackage): string[] {
     lines.push(`        (+${hidden.toString()} more exports)`);
   }
   return lines;
+}
+
+/** Renders the soft-hint badge appended to a vulnerability line. */
+function hintLabelOf(hint: SoftHint): string {
+  switch (hint) {
+    case 'review-priority':
+      return '  [review priority]';
+    case 'likely-low':
+      return '  [likely low]';
+    case 'needs-review':
+      return '';
+  }
+}
+
+/**
+ * Renders the advisory cross-reference line shown under a vulnerability, or
+ * undefined when the advisory named no API to compare against.
+ */
+function formatEvidenceLine(evidence: AdvisoryEvidence): string | undefined {
+  if (evidence.hint === 'needs-review') {
+    return undefined;
+  }
+  const apis = truncateList(evidence.mentionedApis);
+  return evidence.hint === 'review-priority'
+    ? `          advisory mentions: ${apis} · you use: ${evidence.overlap.join(', ')}`
+    : `          advisory mentions: ${apis} · no overlap with your usage`;
+}
+
+/** Joins a list of names, capping it at MAX_EXPORTS_SHOWN with a "+N more" tail. */
+function truncateList(items: readonly string[]): string {
+  if (items.length <= MAX_EXPORTS_SHOWN) {
+    return items.join(', ');
+  }
+  const shown = items.slice(0, MAX_EXPORTS_SHOWN).join(', ');
+  return `${shown}, +${(items.length - MAX_EXPORTS_SHOWN).toString()} more`;
 }
 
 // At most this many dependency chains are listed per transitive package.

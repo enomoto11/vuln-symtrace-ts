@@ -1,6 +1,7 @@
 import { parseLockfileWithGraph } from './lockfile.js';
 import { analyzeImports } from './analyzer.js';
 import { findDependencyPaths, type DependencyPath } from './dependency-graph.js';
+import { extractAdvisoryApis } from './advisory-api.js';
 import { queryBatch } from '../adapters/osv.js';
 import type {
   InstalledPackage,
@@ -9,6 +10,8 @@ import type {
   CodeUsage,
   ExportUsage,
   UsedExport,
+  AdvisoryEvidence,
+  SoftHint,
 } from './types.js';
 
 export interface VulnerablePackage {
@@ -21,6 +24,12 @@ export interface VulnerablePackage {
    * import sites. Empty for `not-affected` and `transitive` packages.
    */
   readonly usedExports: readonly UsedExport[];
+  /**
+   * Per-vulnerability cross-reference between the used exports and the APIs
+   * each advisory mentions, with a soft triage hint. One entry per
+   * vulnerability, in `vulnerabilities` order. Empty unless `needs-review`.
+   */
+  readonly advisoryEvidence: readonly AdvisoryEvidence[];
   /**
    * For a `transitive` package, the dependency chains that pull it in — one
    * per direct dependency responsible. Absent for direct dependencies, and
@@ -96,17 +105,21 @@ export async function scanProject(options: ScanOptions): Promise<ScanSummary> {
           impact: 'transitive',
           usages: [],
           usedExports: [],
+          advisoryEvidence: [],
           dependencyPaths,
         };
       }
       const usages = usagesByName.get(pkg.name) ?? [];
+      const usedExports = aggregateExports(usages);
       const impact: ImpactLevel = usages.length > 0 ? 'needs-review' : 'not-affected';
       return {
         pkg,
         vulnerabilities: vulns,
         impact,
         usages,
-        usedExports: aggregateExports(usages),
+        usedExports,
+        advisoryEvidence:
+          impact === 'needs-review' ? evaluateAdvisoryEvidence(vulns, usedExports) : [],
       };
     },
   );
@@ -124,6 +137,52 @@ export async function scanProject(options: ScanOptions): Promise<ScanSummary> {
  * collapses to one `UsedExport`. The unresolved bucket (`name: null`) groups
  * usages whose export name could not be determined.
  */
+/**
+ * Cross-references each vulnerability against the project's used exports,
+ * producing one `AdvisoryEvidence` per vulnerability (same order). The hint is
+ * a soft prioritisation signal — see `deriveHint` — and never a verdict.
+ */
+export function evaluateAdvisoryEvidence(
+  vulns: readonly OsvVulnerability[],
+  usedExports: readonly UsedExport[],
+): AdvisoryEvidence[] {
+  const usedNames = usedExports
+    .map((used) => used.name)
+    .filter((name): name is string => name !== null);
+  // An unresolved export (`export *`, dynamic import) means the used surface
+  // is not fully known, so "no overlap" cannot be trusted.
+  const hasUnresolvedExport = usedExports.some((used) => used.name === null);
+
+  return vulns.map((vuln): AdvisoryEvidence => {
+    const mentionedApis = extractAdvisoryApis(vuln);
+    const overlap = mentionedApis.filter((api) =>
+      usedNames.some((name) => name.toLowerCase() === api.toLowerCase()),
+    );
+    return {
+      vulnId: vuln.id,
+      mentionedApis,
+      overlap,
+      hint: deriveHint(mentionedApis, overlap, hasUnresolvedExport),
+    };
+  });
+}
+
+/**
+ * Derives the soft triage hint. `review-priority` when a mentioned API is
+ * actually used; `likely-low` only when the advisory names APIs, none overlap,
+ * and the used surface is fully resolved; `needs-review` otherwise.
+ */
+function deriveHint(
+  mentionedApis: readonly string[],
+  overlap: readonly string[],
+  hasUnresolvedExport: boolean,
+): SoftHint {
+  if (mentionedApis.length === 0) return 'needs-review';
+  if (overlap.length > 0) return 'review-priority';
+  if (hasUnresolvedExport) return 'needs-review';
+  return 'likely-low';
+}
+
 function aggregateExports(usages: readonly CodeUsage[]): UsedExport[] {
   const byName = new Map<string | null, ExportUsage[]>();
   for (const usage of usages) {
